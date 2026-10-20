@@ -8,6 +8,7 @@ import { DEFAULT_CONFIG } from './config';
 import { speedOfSound } from './dsp';
 import { DistanceEstimator } from './estimate';
 import type { FromWorker } from './messages';
+import { SonarView } from './viz';
 import './style.css';
 
 function el<T extends HTMLElement>(id: string): T {
@@ -21,7 +22,6 @@ function el<T extends HTMLElement>(id: string): T {
 const button = el<HTMLButtonElement>('toggle');
 const status = el<HTMLElement>('status');
 const errorBox = el<HTMLElement>('error');
-const resultLine = el<HTMLElement>('result');
 
 /** Power ratio to dB. */
 const toDb = (ratio: number) => 10 * Math.log10(ratio);
@@ -36,6 +36,16 @@ const estimator = new DistanceEstimator({
     soundSpeedRelError:
         (0.606 * config.temperatureSigma) / speedOfSound(config.temperature),
 });
+const view = new SonarView(config, {
+    distance: el('distance'),
+    sigma: el('sigma'),
+    details: el('details'),
+    ascan: el('ascan'),
+    ascanTip: el('ascan-tip'),
+    echogram: el('echogram'),
+    echogramTip: el('echogram-tip'),
+    table: el('pings'),
+});
 
 let session: AudioSession | null = null;
 let pingCount = 0;
@@ -46,40 +56,36 @@ function onWorkerMessage(msg: FromWorker) {
     }
     switch (msg.type) {
         case 'stats': {
-            const secs = msg.framesReceived / session.ctx.sampleRate;
             status.textContent =
                 `${session.ctx.sampleRate} Hz · mic ${msg.rmsDb.toFixed(1)} dBFS` +
-                ` · ${secs.toFixed(1)} s captured · ${pingCount} pings`;
+                ` · ${pingCount} pings`;
             break;
         }
         case 'echo': {
             const fs = session.ctx.sampleRate;
             // Samples of round-trip delay -> metres of one-way distance.
-            const toMetres = speedOfSound(config.temperature) / fs / 2;
-            estimator.push({
-                distance:
-                    msg.echo === null
-                        ? null
-                        : (msg.echo - msg.direct) * toMetres,
-                sigma: msg.delaySigma * toMetres,
-                snr: msg.echoSnr,
-            });
-            const est = estimator.estimate();
+            const metresPerSample = speedOfSound(config.temperature) / fs / 2;
+            const distance =
+                msg.echo === null
+                    ? null
+                    : (msg.echo - msg.direct) * metresPerSample;
+            const sigma = msg.delaySigma * metresPerSample;
+            estimator.push({ distance, sigma, snr: msg.echoSnr });
 
-            const latencyMs = (msg.direct / fs) * 1000;
-            let text = est
-                ? `${est.distance.toFixed(3)} m ± ${(est.sigma * 1000).toFixed(1)} mm` +
-                  ` (scatter ${(est.sigmaStat * 1000).toFixed(1)}, SNR model ${(est.sigmaModel * 1000).toFixed(2)},` +
-                  ` sound speed ${(est.sigmaSound * 1000).toFixed(1)} mm;` +
-                  ` ${est.accepted}/${est.window} pings)`
-                : 'no echo';
-            text +=
-                ` · latency ${latencyMs.toFixed(2)} ms` +
-                ` · SNR direct ${toDb(msg.directSnr).toFixed(1)} dB, echo ` +
-                (msg.echo === null
-                    ? '–'
-                    : `${toDb(msg.echoSnr).toFixed(1)} dB`);
-            resultLine.textContent = text;
+            view.update({
+                pingId: msg.pingId,
+                envelope: msg.envelope,
+                envStart: msg.envStart,
+                envStep: msg.envStep,
+                direct: msg.direct,
+                echo: msg.echo,
+                metresPerSample,
+                distance,
+                sigma,
+                echoSnrDb: msg.echo === null ? null : toDb(msg.echoSnr),
+                latencyMs: (msg.direct / fs) * 1000,
+                estimate: estimator.estimate(),
+            });
             break;
         }
     }
@@ -105,7 +111,7 @@ button.addEventListener('click', async () => {
             session = await openAudio(onWorkerMessage);
             pingCount = 0;
             estimator.reset();
-            resultLine.textContent = '';
+            view.reset();
             startPinging(session, config, (id) => {
                 pingCount = id + 1;
             });
