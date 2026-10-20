@@ -5,8 +5,11 @@ import { BANDS, type SonarConfig } from './config';
 import {
     type AnalysisParams,
     analyzePing,
+    delaySigma,
     highpassBiquad,
     nextPow2,
+    peakSnr,
+    rmsBandwidth,
     speedOfSound,
 } from './dsp';
 import type { CaptureBlock, FromWorker, ToWorker } from './messages';
@@ -19,6 +22,8 @@ const ENVELOPE_POINTS = 1000;
 
 interface Job {
     chirp: Float32Array;
+    /** RMS bandwidth of the chirp in Hz, for the delay uncertainty. */
+    bandwidth: number;
     params: AnalysisParams;
     /** Samples analysed per ping, starting at emitFrame. */
     windowLength: number;
@@ -53,6 +58,7 @@ function makeJob(config: SonarConfig, chirp: Float32Array): Job {
     const minLag = Math.ceil(((2 * config.minRange) / c) * sampleRate);
     return {
         chirp,
+        bandwidth: rmsBandwidth(chirp, sampleRate),
         // The device latency is unknown, so the direct path may arrive
         // anywhere within the ping period; its echo up to maxLag later.
         windowLength: period + maxLag + chirp.length,
@@ -144,14 +150,25 @@ function analyse(job: Job, ping: PendingPing) {
         pooled[i] = m;
     }
 
+    const directSnr = peakSnr(result.direct.amplitude, result.noiseFloor);
+    const echoSnr = result.echo
+        ? peakSnr(result.echo.amplitude, result.noiseFloor)
+        : 0;
+    // Both peak positions are uncertain; their errors add in quadrature.
+    const sigma = Math.hypot(
+        delaySigma(directSnr, job.bandwidth),
+        delaySigma(echoSnr, job.bandwidth)
+    );
+
     post(
         {
             type: 'echo',
             pingId: ping.pingId,
             direct: result.direct.index,
-            directAmplitude: result.direct.amplitude,
+            directSnr,
             echo: result.echo?.index ?? null,
-            echoAmplitude: result.echo?.amplitude ?? 0,
+            echoSnr,
+            delaySigma: sigma * sampleRate,
             noiseFloor: result.noiseFloor,
             envelope: pooled,
             envStart: start,

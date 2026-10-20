@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
     analyzePing,
+    delaySigma,
     fft,
     filtfilt,
     highpassBiquad,
     makeChirp,
+    median,
     nextPow2,
+    peakSnr,
+    rmsBandwidth,
+    xcorrEnvelope,
 } from '../dsp';
 
 function sine(fs: number, f: number, n: number, amplitude = 1): Float32Array {
@@ -195,5 +200,78 @@ describe('analyzePing', () => {
         expect(short.echo?.amplitude ?? 0).toBeLessThan(
             0.2 * (result.echo?.amplitude ?? 0)
         );
+    });
+});
+
+describe('uncertainty model', () => {
+    const fs = 48000;
+
+    it('computes the RMS bandwidth of a linear sweep (≈ B/√12)', () => {
+        const chirp = makeChirp(fs, 2000, 12000, 0.005);
+        const b = rmsBandwidth(chirp, fs);
+        expect(b).toBeGreaterThan(0.8 * (10000 / Math.sqrt(12)));
+        expect(b).toBeLessThan(1.2 * (10000 / Math.sqrt(12)));
+    });
+
+    it('estimates noise power from the envelope median', () => {
+        const chirp = makeChirp(fs, 2000, 12000, 0.005);
+        const env = xcorrEnvelope(noise(32768, 1, 3), chirp);
+        let power = 0;
+        for (const v of env) {
+            power += v * v;
+        }
+        power /= env.length;
+        // An envelope sample equal to the noise RMS has power SNR 1.
+        const snr = peakSnr(Math.sqrt(power), median(env));
+        expect(snr).toBeGreaterThan(0.9);
+        expect(snr).toBeLessThan(1.1);
+    });
+
+    it('shrinks the delay sigma with increasing SNR', () => {
+        expect(delaySigma(100, 3000)).toBeLessThan(delaySigma(10, 3000));
+        expect(delaySigma(100, 3000) / delaySigma(10000, 3000)).toBeCloseTo(
+            10,
+            6
+        );
+    });
+
+    it('matches the observed scatter of delay estimates', () => {
+        // Repeated noisy pings: the spread of the measured delay should be of
+        // the order of the predicted sigma.
+        const chirp = makeChirp(fs, 2000, 12000, 0.005);
+        const bandwidth = rmsBandwidth(chirp, fs);
+        const n = 4096;
+        const clean = delayed(chirp, 1000.3, n);
+        const params = {
+            highpass: highpassBiquad(fs, 1400),
+            directSearchEnd: n,
+            blank: 40,
+            maxLag: 100,
+        };
+        const delays: number[] = [];
+        const sigmas: number[] = [];
+        for (let seed = 1; seed <= 40; seed++) {
+            const x = clean.slice();
+            const hiss = noise(n, 0.05, seed);
+            for (let i = 0; i < n; i++) {
+                x[i] += hiss[i];
+            }
+            const r = analyzePing(x, chirp, params);
+            delays.push(r.direct.index);
+            sigmas.push(
+                delaySigma(
+                    peakSnr(r.direct.amplitude, r.noiseFloor),
+                    bandwidth
+                ) * fs
+            );
+        }
+        const mean = delays.reduce((a, b) => a + b, 0) / delays.length;
+        const observed = Math.sqrt(
+            delays.reduce((a, d) => a + (d - mean) ** 2, 0) /
+                (delays.length - 1)
+        );
+        const predicted = median(sigmas);
+        expect(observed).toBeGreaterThan(predicted / 4);
+        expect(observed).toBeLessThan(predicted * 4);
     });
 });

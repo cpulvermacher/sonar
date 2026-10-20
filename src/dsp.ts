@@ -277,3 +277,43 @@ export function analyzePing(
 
     return { direct, echo, noiseFloor: median(envelope), envelope };
 }
+
+/**
+ * RMS bandwidth (Hz) of x around its spectral centroid. This is the bandwidth
+ * that limits delay precision when only the correlation envelope is used.
+ */
+export function rmsBandwidth(x: Float32Array, sampleRate: number): number {
+    const n = nextPow2(4 * x.length);
+    const re = new Float64Array(n);
+    const im = new Float64Array(n);
+    re.set(x);
+    fft(re, im);
+    let p = 0;
+    let pf = 0;
+    let pff = 0;
+    for (let k = 0; k <= n / 2; k++) {
+        const f = (k * sampleRate) / n;
+        const power = re[k] * re[k] + im[k] * im[k];
+        p += power;
+        pf += power * f;
+        pff += power * f * f;
+    }
+    const centroid = pf / p;
+    return Math.sqrt(Math.max(0, pff / p - centroid * centroid));
+}
+
+/**
+ * Power SNR of an envelope peak. Noise in the analytic correlation has a
+ * Rayleigh-distributed magnitude, whose mean power is median² / ln 2.
+ */
+export function peakSnr(amplitude: number, noiseMedian: number): number {
+    return (amplitude * amplitude * Math.LN2) / (noiseMedian * noiseMedian);
+}
+
+/**
+ * Approximate standard deviation (s) of a delay estimate, from the
+ * Cramér–Rao bound for a signal with RMS bandwidth `bandwidth` at power SNR `snr`.
+ */
+export function delaySigma(snr: number, bandwidth: number): number {
+    return 1 / (2 * Math.PI * bandwidth * Math.sqrt(Math.max(snr, 1e-9)));
+}

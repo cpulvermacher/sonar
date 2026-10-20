@@ -42,9 +42,12 @@ export type FromWorker =
           type: 'echo';
           pingId: number;
           direct: number;
-          directAmplitude: number;
+          /** Power SNR of the direct and echo peaks (echo: 0 if none). */
+          directSnr: number;
           echo: number | null;
-          echoAmplitude: number;
+          echoSnr: number;
+          /** Model standard deviation of (echo − direct), in samples. */
+          delaySigma: number;
           noiseFloor: number;
           /** Max-pooled correlation envelope; envelope[i] covers samples from envStart + i·envStep. */
           envelope: Float32Array;

@@ -28,6 +28,12 @@ export interface SonarConfig {
     maxRange: number;
     /** Air temperature in °C, for the speed of sound. */
     temperature: number;
+    /** Assumed uncertainty of the temperature, in °C. */
+    temperatureSigma: number;
+    /** Number of recent pings the distance estimate is based on. */
+    averagePings: number;
+    /** Echoes with a lower SNR (dB) are ignored. */
+    minEchoSnrDb: number;
 }
 
 export const DEFAULT_CONFIG: SonarConfig = {
@@ -38,4 +44,7 @@ export const DEFAULT_CONFIG: SonarConfig = {
     minRange: 0.15,
     maxRange: 5,
     temperature: 20,
+    temperatureSigma: 2,
+    averagePings: 10,
+    minEchoSnrDb: 10,
 };
