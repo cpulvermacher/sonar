@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Sonar</title>
+      <script type="module" crossorigin src="./assets/index-DaZEN5-j.js"></script>
+      <link rel="stylesheet" crossorigin href="./assets/index-CbwB_bsE.css">
+    </head>
+    <body>
+        <main>
+            <h1>Sonar</h1>
+            <div class="controls">
+                <button id="toggle" type="button" aria-pressed="false">Start</button>
+                <span id="status">Stopped</span>
+            </div>
+            <p id="error" role="alert"></p>
+
+            <section class="panel readout" aria-live="polite">
+                <div class="label">Distance</div>
+                <div class="hero">
+                    <span id="distance">—</span>
+                    <span id="sigma"></span>
+                </div>
+                <div id="details"></div>
+            </section>
+
+            <section class="panel chart">
+                <h2>Latest ping</h2>
+                <p class="subtitle">Matched-filter envelope in dB relative to the direct path, by distance</p>
+                <div class="legend">
+                    <span><span class="key" style="background: var(--series-1)"></span>Correlation</span>
+                    <span><span class="key band" style="background: var(--series-2)"></span>Estimate ± σ</span>
+                </div>
+                <div class="plot">
+                    <canvas id="ascan"></canvas>
+                    <div class="tooltip" id="ascan-tip" hidden></div>
+                </div>
+            </section>
+
+            <section class="panel chart">
+                <h2>Echogram</h2>
+                <p class="subtitle">One column per ping, newest on the right</p>
+                <div class="legend">
+                    <span>−50 dB<span class="scale" id="scale"></span>0 dB</span>
+                    <span><span class="key" style="background: var(--series-2)"></span>Estimate</span>
+                </div>
+                <div class="plot">
+                    <canvas id="echogram"></canvas>
+                    <div class="tooltip" id="echogram-tip" hidden></div>
+                </div>
+            </section>
+
+            <section class="panel">
+                <details>
+                    <summary>Recent pings</summary>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th scope="col">Ping</th>
+                                <th scope="col">Distance (m)</th>
+                                <th scope="col">σ (mm)</th>
+                                <th scope="col">Echo SNR (dB)</th>
+                                <th scope="col">Latency (ms)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="pings"></tbody>
+                    </table>
+                </details>
+            </section>
+        </main>
+    </body>
+</html>
