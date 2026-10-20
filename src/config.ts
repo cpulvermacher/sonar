@@ -38,13 +38,13 @@ export interface SonarConfig {
 
 export const DEFAULT_CONFIG: SonarConfig = {
     band: 'audible',
-    chirpDuration: 0.005,
+    chirpDuration: 0.01,
     interval: 0.25,
     amplitude: 0.8,
     minRange: 0.15,
-    maxRange: 5,
+    maxRange: 2,
     temperature: 20,
     temperatureSigma: 2,
     averagePings: 10,
-    minEchoSnrDb: 10,
+    minEchoSnrDb: 18,
 };
