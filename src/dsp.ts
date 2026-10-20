@@ -181,23 +181,49 @@ export function argmax(y: ArrayLike<number>, from = 0, to = y.length): number {
     return best;
 }
 
-/** Index of the largest local maximum of y in [from, to), or -1 if none. */
-export function largestLocalMax(
+/**
+ * Prominence of the peak at i, as a ratio: y[i] divided by the higher of the
+ * two troughs separating it from a taller point on either side (or from the
+ * array edge). A bump on the flank of a bigger peak has a ratio close to 1.
+ */
+export function prominence(y: ArrayLike<number>, i: number): number {
+    const peak = y[i];
+    let left = peak;
+    for (let j = i - 1; j >= 0 && y[j] <= peak; j--) {
+        left = Math.min(left, y[j]);
+    }
+    let right = peak;
+    for (let j = i + 1; j < y.length && y[j] <= peak; j++) {
+        right = Math.min(right, y[j]);
+    }
+    return peak / Math.max(left, right, 1e-12);
+}
+
+/**
+ * Index of the largest local maximum of y in [from, to) whose prominence
+ * ratio is at least minProminence, or -1 if there is none.
+ */
+export function largestProminentPeak(
     y: ArrayLike<number>,
     from: number,
-    to: number
+    to: number,
+    minProminence: number
 ): number {
-    let best = -1;
+    const candidates: number[] = [];
     for (let i = Math.max(1, from); i < Math.min(to, y.length - 1); i++) {
-        if (
-            y[i] >= y[i - 1] &&
-            y[i] > y[i + 1] &&
-            (best < 0 || y[i] > y[best])
-        ) {
-            best = i;
+        if (y[i] >= y[i - 1] && y[i] > y[i + 1]) {
+            candidates.push(i);
         }
     }
-    return best;
+    // Strongest first; the first prominent one wins, so typically only a
+    // few prominences need computing.
+    candidates.sort((a, b) => y[b] - y[a]);
+    for (const i of candidates) {
+        if (prominence(y, i) >= minProminence) {
+            return i;
+        }
+    }
+    return -1;
 }
 
 /** Sub-sample peak position by fitting a parabola through y[i-1..i+1]. */
@@ -248,12 +274,15 @@ export interface AnalysisParams {
     /** Echoes are searched for in (direct + blank, direct + maxLag]. */
     blank: number;
     maxLag: number;
+    /** Minimum prominence ratio of an echo peak. */
+    minProminence: number;
 }
 
 /**
  * Highpass, matched filter, and peak picking for one recorded ping.
  * The direct (speaker → mic) path is the strongest peak; the echo is the
- * strongest local maximum after the blanking interval.
+ * strongest sufficiently prominent peak after the blanking interval, so the
+ * direct path's decaying flank is not mistaken for an echo.
  */
 export function analyzePing(
     x: Float32Array,
@@ -269,7 +298,12 @@ export function analyzePing(
         amplitude: envelope[d],
     };
 
-    const e = largestLocalMax(envelope, d + p.blank, d + p.maxLag + 1);
+    const e = largestProminentPeak(
+        envelope,
+        d + p.blank,
+        d + p.maxLag + 1,
+        p.minProminence
+    );
     const echo =
         e < 0
             ? null

@@ -5,10 +5,12 @@ import {
     fft,
     filtfilt,
     highpassBiquad,
+    largestProminentPeak,
     makeChirp,
     median,
     nextPow2,
     peakSnr,
+    prominence,
     rmsBandwidth,
     xcorrEnvelope,
 } from '../dsp';
@@ -171,6 +173,7 @@ describe('analyzePing', () => {
         directSearchEnd: 6000,
         blank: 40,
         maxLag: 3000,
+        minProminence: 2,
     });
 
     it('finds the direct path', () => {
@@ -195,11 +198,73 @@ describe('analyzePing', () => {
             directSearchEnd: 6000,
             blank: 40,
             maxLag: 1000,
+            minProminence: 2,
         });
         // Only sidelobes/noise remain in range, far below the real echo.
         expect(short.echo?.amplitude ?? 0).toBeLessThan(
             0.2 * (result.echo?.amplitude ?? 0)
         );
+    });
+});
+
+describe('prominence', () => {
+    it('is large for an isolated peak and ~1 for a bump on a flank', () => {
+        //        0  1  2   3  4    5    6    7  8  9
+        const y = [1, 2, 10, 6, 5.8, 5.9, 3.0, 1, 4, 1];
+        expect(prominence(y, 2)).toBeCloseTo(10 / 1, 9); // main peak
+        expect(prominence(y, 5)).toBeCloseTo(5.9 / 5.8, 9); // flank bump
+        expect(prominence(y, 8)).toBeCloseTo(4 / 1, 9); // separate echo
+    });
+
+    it('picks the strongest prominent peak, not the flank bump', () => {
+        const y = [1, 2, 10, 6, 5.8, 5.9, 3.0, 1, 4, 1];
+        expect(largestProminentPeak(y, 3, 10, 2)).toBe(8);
+        expect(largestProminentPeak(y, 3, 10, 5)).toBe(-1);
+    });
+});
+
+describe('analyzePing with a smeared direct path', () => {
+    // Speaker ringing: the direct path followed by a rippled, decaying train
+    // of closely spaced copies, plus a weak real echo further out.
+    const fs = 48000;
+    const chirp = makeChirp(fs, 2000, 12000, 0.005);
+    const n = 8000;
+    const directAt = 1000;
+    const echoDelay = 600.4;
+    const x = new Float32Array(n);
+    for (let k = 0; k < 30; k++) {
+        const copy = delayed(chirp, directAt + 2.5 * k, n);
+        for (let i = 0; i < n; i++) {
+            x[i] += 0.88 ** k * (1 + 0.4 * Math.sin(k)) * copy[i];
+        }
+    }
+    const echo = delayed(chirp, directAt + echoDelay, n);
+    const hiss = noise(n, 0.002, 5);
+    for (let i = 0; i < n; i++) {
+        x[i] += 0.1 * echo[i] + hiss[i];
+    }
+
+    const analyse = (minProminence: number) =>
+        analyzePing(x, chirp, {
+            highpass: highpassBiquad(fs, 1400),
+            directSearchEnd: 4000,
+            // Blanking ends inside the ringing tail.
+            blank: 20,
+            maxLag: 2000,
+            minProminence,
+        });
+    const delayOf = (r: ReturnType<typeof analyse>) =>
+        (r.echo?.index ?? 0) - r.direct.index;
+
+    it('picks a bump on the flank when any local maximum is accepted', () => {
+        // Prominence ratio >= 1 holds for every peak: the old behaviour.
+        expect(delayOf(analyse(1))).toBeLessThan(100);
+    });
+
+    it('skips the flank and finds the real echo', () => {
+        const result = analyse(2);
+        expect(result.echo).not.toBeNull();
+        expect(Math.abs(delayOf(result) - echoDelay)).toBeLessThan(5);
     });
 });
 
@@ -247,6 +312,7 @@ describe('uncertainty model', () => {
             directSearchEnd: n,
             blank: 40,
             maxLag: 100,
+            minProminence: 2,
         };
         const delays: number[] = [];
         const sigmas: number[] = [];

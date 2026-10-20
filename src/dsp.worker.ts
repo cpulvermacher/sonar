@@ -67,6 +67,8 @@ function makeJob(config: SonarConfig, chirp: Float32Array): Job {
             directSearchEnd: period,
             blank: Math.max(minLag, pulseWidth),
             maxLag,
+            // Envelope amplitudes, so dB / 20.
+            minProminence: 10 ** (config.minEchoProminenceDb / 20),
         },
     };
 }

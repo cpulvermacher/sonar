@@ -34,6 +34,8 @@ export interface SonarConfig {
     averagePings: number;
     /** Echoes with a lower SNR (dB) are ignored. */
     minEchoSnrDb: number;
+    /** An echo peak must rise this much (dB) above the trough before a taller neighbour. */
+    minEchoProminenceDb: number;
 }
 
 export const DEFAULT_CONFIG: SonarConfig = {
@@ -47,4 +49,5 @@ export const DEFAULT_CONFIG: SonarConfig = {
     temperatureSigma: 2,
     averagePings: 10,
     minEchoSnrDb: 18,
+    minEchoProminenceDb: 6,
 };
