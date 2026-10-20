@@ -8,11 +8,18 @@ export interface CaptureBlock {
 }
 
 /** Main -> worker. */
-export type ToWorker = {
-    type: 'init';
-    port: MessagePort;
-    sampleRate: number;
-};
+export type ToWorker =
+    | {
+          type: 'init';
+          port: MessagePort;
+          sampleRate: number;
+      }
+    | {
+          /** A chirp has been scheduled to start playing at emitFrame. */
+          type: 'ping';
+          pingId: number;
+          emitFrame: number;
+      };
 
 /** Worker -> main. */
 export type FromWorker = {

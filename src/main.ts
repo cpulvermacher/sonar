@@ -1,4 +1,10 @@
-import { type AudioSession, closeAudio, openAudio } from './audio';
+import {
+    type AudioSession,
+    closeAudio,
+    openAudio,
+    startPinging,
+} from './audio';
+import { DEFAULT_CONFIG } from './config';
 import type { FromWorker } from './messages';
 import './style.css';
 
@@ -15,6 +21,7 @@ const status = el<HTMLElement>('status');
 const errorBox = el<HTMLElement>('error');
 
 let session: AudioSession | null = null;
+let pingCount = 0;
 
 function onWorkerMessage(msg: FromWorker) {
     if (!session) {
@@ -25,7 +32,7 @@ function onWorkerMessage(msg: FromWorker) {
             const secs = msg.framesReceived / session.ctx.sampleRate;
             status.textContent =
                 `${session.ctx.sampleRate} Hz · mic ${msg.rmsDb.toFixed(1)} dBFS` +
-                ` · ${secs.toFixed(1)} s captured`;
+                ` · ${secs.toFixed(1)} s captured · ${pingCount} pings`;
             break;
         }
     }
@@ -49,6 +56,10 @@ button.addEventListener('click', async () => {
         } else {
             status.textContent = 'Starting…';
             session = await openAudio(onWorkerMessage);
+            pingCount = 0;
+            startPinging(session, DEFAULT_CONFIG, (id) => {
+                pingCount = id + 1;
+            });
             status.textContent = `${session.ctx.sampleRate} Hz`;
             setRunning(true);
         }

@@ -40,5 +40,8 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
             msg.port.onmessage = (ev: MessageEvent<CaptureBlock>) =>
                 onBlock(ev.data);
             break;
+        case 'ping':
+            // Processed in the next step.
+            break;
     }
 };
