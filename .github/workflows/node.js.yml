@@ -1,0 +1,51 @@
+# This workflow will do a clean installation of node dependencies, cache/restore them, build the source code and run tests across different versions of node
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-nodejs
+
+name: Node.js CI
+permissions:
+  contents: read
+
+on:
+  [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+        fetch-tags: true
+    - uses: pnpm/action-setup@08c4be7e2e672a47d11bd04269e27e5f3e8529cb # v6.0.0
+    - name: Use Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: 24.x
+        cache: 'pnpm'
+    - run: pnpm install
+    - run: pnpm run lint
+    - run: pnpm run test
+    - run: pnpm run build
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+        fetch-tags: true
+    - uses: pnpm/action-setup@08c4be7e2e672a47d11bd04269e27e5f3e8529cb # v6.0.0
+    - name: Use Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: 24.x
+        cache: 'pnpm'
+    - run: pnpm install && pnpm run build
+    - name: Deploy 🚀
+      uses: JamesIves/github-pages-deploy-action@6c2d9db40f9296374acc17b90404b6e8864128c8 # v4.7.3
+      with:
+        folder: dist
