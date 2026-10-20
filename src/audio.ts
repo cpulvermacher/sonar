@@ -143,6 +143,8 @@ export function startPinging(
     );
     const buffer = ctx.createBuffer(1, samples.length, ctx.sampleRate);
     buffer.getChannelData(0).set(samples);
+    const start: ToWorker = { type: 'start', config, chirp: samples };
+    worker.postMessage(start, [samples.buffer]);
 
     const sources = new Set<AudioBufferSourceNode>();
     let nextTime = ctx.currentTime + MIN_LEAD_S;

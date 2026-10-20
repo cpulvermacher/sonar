@@ -22,6 +22,12 @@ export interface SonarConfig {
     interval: number;
     /** Peak amplitude of the emitted chirp (0..1). */
     amplitude: number;
+    /** Echoes closer than this (m) are ignored; masks the direct path's tail. */
+    minRange: number;
+    /** Echoes farther than this (m) are not searched for. */
+    maxRange: number;
+    /** Air temperature in °C, for the speed of sound. */
+    temperature: number;
 }
 
 export const DEFAULT_CONFIG: SonarConfig = {
@@ -29,4 +35,7 @@ export const DEFAULT_CONFIG: SonarConfig = {
     chirpDuration: 0.005,
     interval: 0.25,
     amplitude: 0.8,
+    minRange: 0.15,
+    maxRange: 5,
+    temperature: 20,
 };
