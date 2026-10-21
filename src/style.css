@@ -253,6 +253,12 @@ button:disabled {
     font-variant-numeric: tabular-nums;
 }
 
+#version {
+    color: var(--text-muted);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+
 /* Table view */
 
 details summary {

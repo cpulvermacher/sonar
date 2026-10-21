@@ -27,6 +27,8 @@ const button = el<HTMLButtonElement>('toggle');
 const saveButton = el<HTMLButtonElement>('save');
 const status = el<HTMLElement>('status');
 const errorBox = el<HTMLElement>('error');
+el('version').textContent =
+    `Version ${import.meta.env.VITE_GIT_VERSION || 'dev'}`;
 
 /** Power ratio to dB. */
 const toDb = (ratio: number) => 10 * Math.log10(ratio);
