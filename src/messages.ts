@@ -1,6 +1,7 @@
 // Message types shared between the main thread, the capture worklet and the DSP worker.
 
 import type { SonarConfig } from './config';
+import type { PeakCandidate } from './dsp';
 
 /** Worklet -> worker: a batch of consecutive mic samples. */
 export interface CaptureBlock {
@@ -41,11 +42,14 @@ export type FromWorker =
           /** Analysis of one ping. Sample positions are relative to emitFrame. */
           type: 'echo';
           pingId: number;
+          emitFrame: number;
           direct: number;
           /** Power SNR of the direct and echo peaks (echo: 0 if none). */
           directSnr: number;
           echo: number | null;
           echoSnr: number;
+          /** Strongest local maxima in the echo search range, with their prominence. */
+          candidates: PeakCandidate[];
           /** Model standard deviation of (echo − direct), in samples. */
           delaySigma: number;
           noiseFloor: number;
@@ -53,4 +57,6 @@ export type FromWorker =
           envelope: Float32Array;
           envStart: number;
           envStep: number;
+          /** The raw mic samples that were analysed, starting at emitFrame. */
+          raw: Float32Array;
       };

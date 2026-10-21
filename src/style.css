@@ -90,6 +90,12 @@ button {
     cursor: pointer;
 }
 
+button.secondary {
+    background: transparent;
+    color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--border);
+}
+
 button:disabled {
     opacity: 0.5;
     cursor: default;
@@ -191,6 +197,18 @@ button:disabled {
 .legend .band {
     height: 10px;
     border-radius: 2px;
+}
+
+.legend .stem {
+    width: 2px;
+    height: 12px;
+    margin: 0 10px 0 4px;
+    background: var(--text-secondary);
+}
+
+.legend .dashed {
+    height: 0;
+    border-top: 1px dashed var(--text-muted);
 }
 
 .legend .scale {

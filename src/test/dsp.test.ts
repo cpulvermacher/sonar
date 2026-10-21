@@ -6,6 +6,7 @@ import {
     filtfilt,
     highpassBiquad,
     largestProminentPeak,
+    localMaxima,
     makeChirp,
     median,
     nextPow2,
@@ -221,6 +222,12 @@ describe('prominence', () => {
         expect(largestProminentPeak(y, 3, 10, 2)).toBe(8);
         expect(largestProminentPeak(y, 3, 10, 5)).toBe(-1);
     });
+
+    it('lists local maxima in the range, strongest first', () => {
+        const y = [1, 2, 10, 6, 5.8, 5.9, 3.0, 1, 4, 1];
+        expect(localMaxima(y, 0, 10)).toEqual([2, 5, 8]);
+        expect(localMaxima(y, 3, 10)).toEqual([5, 8]);
+    });
 });
 
 describe('analyzePing with a smeared direct path', () => {
@@ -265,6 +272,24 @@ describe('analyzePing with a smeared direct path', () => {
         const result = analyse(2);
         expect(result.echo).not.toBeNull();
         expect(Math.abs(delayOf(result) - echoDelay)).toBeLessThan(5);
+    });
+
+    it('reports the rejected flank bumps as candidates', () => {
+        const result = analyse(2);
+        const { candidates } = result;
+        expect(candidates.length).toBeGreaterThan(1);
+        for (let k = 1; k < candidates.length; k++) {
+            expect(candidates[k].amplitude).toBeLessThanOrEqual(
+                candidates[k - 1].amplitude
+            );
+        }
+        // Whatever beat the echo in amplitude must have failed on prominence.
+        const echoAmplitude = result.echo?.amplitude ?? 0;
+        for (const c of candidates) {
+            if (c.amplitude > echoAmplitude) {
+                expect(c.prominence).toBeLessThan(2);
+            }
+        }
     });
 });
 

@@ -1,6 +1,7 @@
 // Rendering: distance readout, A-scan of the latest ping, echogram history
 // and a table of recent pings. Plain Canvas 2D, colours from CSS tokens.
 
+import { median, type PeakCandidate } from './dsp';
 import type { Estimate } from './estimate';
 
 export interface PingView {
@@ -9,9 +10,13 @@ export interface PingView {
     envelope: Float32Array;
     envStart: number;
     envStep: number;
+    /** Median of the full (unpooled) envelope, the SNR reference. */
+    noiseFloor: number;
     /** Peak positions in samples, on the same axis as envStart. */
     direct: number;
     echo: number | null;
+    /** Strongest local maxima considered for the echo. */
+    candidates: PeakCandidate[];
     /** Converts a round-trip delay in samples to one-way distance in m. */
     metresPerSample: number;
     /** This ping's distance (m) and its model σ, if an echo was found. */
@@ -26,6 +31,8 @@ export interface ViewOptions {
     minRange: number;
     maxRange: number;
     interval: number;
+    minEchoSnrDb: number;
+    minEchoProminenceDb: number;
 }
 
 /** Lowest level shown, in dB relative to the direct path. */
@@ -271,6 +278,11 @@ export class SonarView {
         return (sample - ping.envStart) / ping.envStep;
     }
 
+    /** Distance in m of a peak at sample position `index`. */
+    private peakDistance(ping: PingView, index: number): number {
+        return (index - ping.direct) * ping.metresPerSample;
+    }
+
     private envDistance(ping: PingView, i: number): number {
         const sample = ping.envStart + (i + 0.5) * ping.envStep;
         return (sample - ping.direct) * ping.metresPerSample;
@@ -278,6 +290,22 @@ export class SonarView {
 
     private reference(ping: PingView): number {
         return ping.envelope.reduce((m, v) => Math.max(m, v), 1e-12);
+    }
+
+    /** Envelope amplitude at which an echo reaches the SNR threshold (inverse of peakSnr). */
+    private snrThreshold(ping: PingView): number {
+        const snr = 10 ** (this.options.minEchoSnrDb / 10);
+        return ping.noiseFloor * Math.sqrt(snr / Math.LN2);
+    }
+
+    /**
+     * How far each recent ping's direct path lies from their median, in m of
+     * distance; a shifted reference shifts the measured distance by as much.
+     */
+    private directShifts(): number[] {
+        const directs = this.recent.map((p) => p.direct);
+        const mid = median(directs);
+        return this.recent.map((p) => (p.direct - mid) * p.metresPerSample);
     }
 
     private makeColumn(ping: PingView): Column {
@@ -346,18 +374,22 @@ export class SonarView {
                 : `echo SNR ${ping.echoSnrDb.toFixed(1)} dB`,
             `latency ${ping.latencyMs.toFixed(1)} ms`
         );
+        if (this.recent.length >= 2) {
+            parts.push(`direct path jitter ${mm(rms(this.directShifts()))}`);
+        }
         el.details.textContent = parts.join(' · ');
     }
 
     private renderTable(): void {
-        const rows = this.recent.map((p) => {
+        const shifts = this.directShifts();
+        const rows = this.recent.map((p, k) => {
             const tr = document.createElement('tr');
             const cells = [
                 String(p.pingId),
                 p.distance === null ? '—' : p.distance.toFixed(3),
                 p.distance === null ? '—' : (p.sigma * 1000).toFixed(2),
                 p.echoSnrDb === null ? '—' : p.echoSnrDb.toFixed(1),
-                p.latencyMs.toFixed(2),
+                (shifts[k] * 1000).toFixed(1),
             ];
             for (const text of cells) {
                 const td = document.createElement('td');
@@ -479,6 +511,21 @@ export class SonarView {
                 ctx.fillRect(xScale(est.distance) - 1, p.y, 2, p.h);
             }
 
+            // Echoes below this line are too weak to count for the estimate.
+            const yMin = Math.round(yScale(toDb(this.snrThreshold(ping), ref)));
+            ctx.strokeStyle = t.textMuted;
+            ctx.lineWidth = 1;
+            ctx.setLineDash([4, 4]);
+            ctx.beginPath();
+            ctx.moveTo(p.x, yMin + 0.5);
+            ctx.lineTo(p.x + p.w, yMin + 0.5);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.fillStyle = t.textMuted;
+            ctx.textAlign = 'right';
+            ctx.textBaseline = 'bottom';
+            ctx.fillText('min SNR', p.x + p.w - 4, yMin - 2);
+
             ctx.strokeStyle = t.series1;
             ctx.lineWidth = 2;
             ctx.lineJoin = 'round';
@@ -497,8 +544,29 @@ export class SonarView {
             }
             ctx.stroke();
 
+            // Echo candidates: a stem from each peak down to the trough its
+            // prominence is measured against. Prominent enough = darker, thicker.
+            for (const c of ping.candidates) {
+                const x =
+                    Math.round(xScale(this.peakDistance(ping, c.index))) + 0.5;
+                const top = yScale(toDb(c.amplitude, ref));
+                const base = yScale(
+                    Math.max(DB_FLOOR, toDb(c.amplitude / c.prominence, ref))
+                );
+                const passes =
+                    toDb(c.prominence, 1) >= this.options.minEchoProminenceDb;
+                ctx.strokeStyle = passes ? t.textSecondary : t.textMuted;
+                ctx.lineWidth = passes ? 2 : 1;
+                ctx.beginPath();
+                ctx.moveTo(x, top);
+                ctx.lineTo(x, base);
+                ctx.moveTo(x - 4, base);
+                ctx.lineTo(x + 4, base);
+                ctx.stroke();
+            }
+
             if (ping.echo !== null) {
-                const d = (ping.echo - ping.direct) * ping.metresPerSample;
+                const d = this.peakDistance(ping, ping.echo);
                 const i = Math.round(this.envIndex(ping, d) - 0.5);
                 const db = toDb(
                     ping.envelope[
@@ -549,12 +617,23 @@ export class SonarView {
         ctx.lineTo(Math.round(x) + 0.5, p.y + p.h);
         ctx.stroke();
         this.dot(ctx, x, yScale(Math.max(DB_FLOOR, db)), this.theme.series1);
+        const parts = [`${d.toFixed(3)} m`, `${db.toFixed(1)} dB`];
+        const near = ping.candidates.find(
+            (c) =>
+                Math.abs(xScale(this.peakDistance(ping, c.index)) - hover.x) <=
+                6
+        );
+        if (near) {
+            parts.push(
+                `peak prominence ${toDb(near.prominence, 1).toFixed(1)} dB`
+            );
+        }
         this.showTip(
             tip,
             this.ascan,
             x,
             yScale(Math.max(DB_FLOOR, db)),
-            `${d.toFixed(3)} m · ${db.toFixed(1)} dB`
+            parts.join(' · ')
         );
     }
 
@@ -729,6 +808,10 @@ export class SonarView {
         tip.style.left = `${Math.max(0, left)}px`;
         tip.style.top = `${top}px`;
     }
+}
+
+function rms(values: number[]): number {
+    return Math.sqrt(values.reduce((s, v) => s + v * v, 0) / values.length);
 }
 
 function mm(metres: number): string {

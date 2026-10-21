@@ -199,6 +199,21 @@ export function prominence(y: ArrayLike<number>, i: number): number {
     return peak / Math.max(left, right, 1e-12);
 }
 
+/** Indices of the local maxima of y in [from, to), strongest first. */
+export function localMaxima(
+    y: ArrayLike<number>,
+    from: number,
+    to: number
+): number[] {
+    const maxima: number[] = [];
+    for (let i = Math.max(1, from); i < Math.min(to, y.length - 1); i++) {
+        if (y[i] >= y[i - 1] && y[i] > y[i + 1]) {
+            maxima.push(i);
+        }
+    }
+    return maxima.sort((a, b) => y[b] - y[a]);
+}
+
 /**
  * Index of the largest local maximum of y in [from, to) whose prominence
  * ratio is at least minProminence, or -1 if there is none.
@@ -209,21 +224,13 @@ export function largestProminentPeak(
     to: number,
     minProminence: number
 ): number {
-    const candidates: number[] = [];
-    for (let i = Math.max(1, from); i < Math.min(to, y.length - 1); i++) {
-        if (y[i] >= y[i - 1] && y[i] > y[i + 1]) {
-            candidates.push(i);
-        }
-    }
     // Strongest first; the first prominent one wins, so typically only a
     // few prominences need computing.
-    candidates.sort((a, b) => y[b] - y[a]);
-    for (const i of candidates) {
-        if (prominence(y, i) >= minProminence) {
-            return i;
-        }
-    }
-    return -1;
+    return (
+        localMaxima(y, from, to).find(
+            (i) => prominence(y, i) >= minProminence
+        ) ?? -1
+    );
 }
 
 /** Sub-sample peak position by fitting a parabola through y[i-1..i+1]. */
@@ -259,9 +266,19 @@ export interface Peak {
     amplitude: number;
 }
 
+export interface PeakCandidate extends Peak {
+    /** Prominence ratio, see prominence(). */
+    prominence: number;
+}
+
+/** Number of echo candidates reported for display. */
+const MAX_CANDIDATES = 8;
+
 export interface PingAnalysis {
     direct: Peak;
     echo: Peak | null;
+    /** The strongest local maxima in the echo search range, strongest first. */
+    candidates: PeakCandidate[];
     /** Median of the correlation envelope; the noise reference for SNR. */
     noiseFloor: number;
     envelope: Float32Array;
@@ -298,18 +315,28 @@ export function analyzePing(
         amplitude: envelope[d],
     };
 
-    const e = largestProminentPeak(
-        envelope,
-        d + p.blank,
-        d + p.maxLag + 1,
-        p.minProminence
-    );
+    const from = d + p.blank;
+    const to = d + p.maxLag + 1;
+    const e = largestProminentPeak(envelope, from, to, p.minProminence);
     const echo =
         e < 0
             ? null
             : { index: parabolicInterp(envelope, e), amplitude: envelope[e] };
+    const candidates = localMaxima(envelope, from, to)
+        .slice(0, MAX_CANDIDATES)
+        .map((i) => ({
+            index: parabolicInterp(envelope, i),
+            amplitude: envelope[i],
+            prominence: prominence(envelope, i),
+        }));
 
-    return { direct, echo, noiseFloor: median(envelope), envelope };
+    return {
+        direct,
+        echo,
+        candidates,
+        noiseFloor: median(envelope),
+        envelope,
+    };
 }
 
 /**

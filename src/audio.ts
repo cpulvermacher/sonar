@@ -124,13 +124,13 @@ export async function openAudio(
  * Emits a chirp every config.interval seconds. Pings are scheduled on the
  * audio clock slightly ahead of time, so timing stays sample-exact even if
  * the main thread stalls. Each ping is announced to the worker with the
- * context frame at which it starts playing.
+ * context frame at which it starts playing. Returns the emitted chirp.
  */
 export function startPinging(
     session: AudioSession,
     config: SonarConfig,
     onPing: (pingId: number) => void
-): void {
+): Float32Array {
     stopPinging(session);
     const { ctx, worker } = session;
     const band = BANDS[config.band];
@@ -143,8 +143,10 @@ export function startPinging(
     );
     const buffer = ctx.createBuffer(1, samples.length, ctx.sampleRate);
     buffer.getChannelData(0).set(samples);
-    const start: ToWorker = { type: 'start', config, chirp: samples };
-    worker.postMessage(start, [samples.buffer]);
+    // The worker gets its own copy; the original is returned to the caller.
+    const chirp = samples.slice();
+    const start: ToWorker = { type: 'start', config, chirp };
+    worker.postMessage(start, [chirp.buffer]);
 
     const sources = new Set<AudioBufferSourceNode>();
     let nextTime = ctx.currentTime + MIN_LEAD_S;
@@ -185,6 +187,7 @@ export function startPinging(
 
     schedule();
     session.pinger = { timer: window.setInterval(schedule, TIMER_MS), sources };
+    return samples;
 }
 
 export function stopPinging(session: AudioSession): void {

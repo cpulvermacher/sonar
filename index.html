@@ -10,6 +10,7 @@
             <h1>Sonar</h1>
             <div class="controls">
                 <button id="toggle" type="button" aria-pressed="false">Start</button>
+                <button id="save" type="button" class="secondary" disabled>Save recording</button>
                 <span id="status">Stopped</span>
             </div>
             <p id="error" role="alert"></p>
@@ -29,6 +30,8 @@
                 <div class="legend">
                     <span><span class="key" style="background: var(--series-1)"></span>Correlation</span>
                     <span><span class="key band" style="background: var(--series-2)"></span>Estimate ± σ</span>
+                    <span><span class="key stem"></span>Peak prominence (thick: enough)</span>
+                    <span><span class="key dashed"></span>Min SNR</span>
                 </div>
                 <div class="plot">
                     <canvas id="ascan"></canvas>
@@ -59,7 +62,7 @@
                                 <th scope="col">Distance (m)</th>
                                 <th scope="col">σ (mm)</th>
                                 <th scope="col">Echo SNR (dB)</th>
-                                <th scope="col">Latency (ms)</th>
+                                <th scope="col">Direct shift (mm)</th>
                             </tr>
                         </thead>
                         <tbody id="pings"></tbody>

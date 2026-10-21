@@ -8,8 +8,12 @@ import { DEFAULT_CONFIG } from './config';
 import { speedOfSound } from './dsp';
 import { DistanceEstimator } from './estimate';
 import type { FromWorker } from './messages';
+import { encodeRecording, Recorder } from './recording';
 import { SonarView } from './viz';
 import './style.css';
+
+/** Pings kept for "Save recording" (10 s at the default interval). */
+const RECORDING_PINGS = 40;
 
 function el<T extends HTMLElement>(id: string): T {
     const node = document.getElementById(id);
@@ -20,6 +24,7 @@ function el<T extends HTMLElement>(id: string): T {
 }
 
 const button = el<HTMLButtonElement>('toggle');
+const saveButton = el<HTMLButtonElement>('save');
 const status = el<HTMLElement>('status');
 const errorBox = el<HTMLElement>('error');
 
@@ -50,6 +55,10 @@ const view = new SonarView(config, {
 let session: AudioSession | null = null;
 let pingCount = 0;
 
+// Kept after Stop, so a recording can still be saved.
+const recorder = new Recorder(RECORDING_PINGS);
+let recordingInfo: { sampleRate: number; chirp: Float32Array } | null = null;
+
 function onWorkerMessage(msg: FromWorker) {
     if (!session) {
         return;
@@ -71,14 +80,25 @@ function onWorkerMessage(msg: FromWorker) {
                     : (msg.echo - msg.direct) * metresPerSample;
             const sigma = msg.delaySigma * metresPerSample;
             estimator.push({ distance, sigma, snr: msg.echoSnr });
+            recorder.push({
+                pingId: msg.pingId,
+                emitFrame: msg.emitFrame,
+                samples: msg.raw,
+                direct: msg.direct,
+                echo: msg.echo,
+                echoSnr: msg.echoSnr,
+            });
+            saveButton.disabled = false;
 
             view.update({
                 pingId: msg.pingId,
                 envelope: msg.envelope,
                 envStart: msg.envStart,
                 envStep: msg.envStep,
+                noiseFloor: msg.noiseFloor,
                 direct: msg.direct,
                 echo: msg.echo,
+                candidates: msg.candidates,
                 metresPerSample,
                 distance,
                 sigma,
@@ -112,9 +132,12 @@ button.addEventListener('click', async () => {
             pingCount = 0;
             estimator.reset();
             view.reset();
-            startPinging(session, config, (id) => {
+            recorder.clear();
+            saveButton.disabled = true;
+            const chirp = startPinging(session, config, (id) => {
                 pingCount = id + 1;
             });
+            recordingInfo = { sampleRate: session.ctx.sampleRate, chirp };
             status.textContent = `${session.ctx.sampleRate} Hz`;
             setRunning(true);
         }
@@ -126,4 +149,33 @@ button.addEventListener('click', async () => {
     } finally {
         button.disabled = false;
     }
+});
+
+saveButton.addEventListener('click', () => {
+    if (!recordingInfo || recorder.size === 0) {
+        return;
+    }
+    const now = new Date();
+    const json = encodeRecording({
+        createdAt: now.toISOString(),
+        userAgent: navigator.userAgent,
+        sampleRate: recordingInfo.sampleRate,
+        config,
+        chirp: recordingInfo.chirp,
+        pings: recorder.snapshot(),
+    });
+    const url = URL.createObjectURL(
+        new Blob([json], { type: 'application/json' })
+    );
+    const link = document.createElement('a');
+    link.href = url;
+    // Local time, e.g. sonar-2026-10-21T22-37-57.json
+    const stamp = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+        .toISOString()
+        .slice(0, 19)
+        .replace(/:/g, '-');
+    link.download = `sonar-${stamp}.json`;
+    link.click();
+    // Give the download a moment to start before releasing the data.
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
 });

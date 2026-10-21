@@ -166,17 +166,20 @@ function analyse(job: Job, ping: PendingPing) {
         {
             type: 'echo',
             pingId: ping.pingId,
+            emitFrame: ping.emitFrame,
             direct: result.direct.index,
             directSnr,
             echo: result.echo?.index ?? null,
             echoSnr,
+            candidates: result.candidates,
             delaySigma: sigma * sampleRate,
             noiseFloor: result.noiseFloor,
             envelope: pooled,
             envStart: start,
             envStep: step,
+            raw: x,
         },
-        [pooled.buffer]
+        [pooled.buffer, x.buffer]
     );
 }
 
