@@ -4,8 +4,8 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>Sonar</title>
-      <script type="module" crossorigin src="./assets/index-DFfkWTJo.js"></script>
-      <link rel="stylesheet" crossorigin href="./assets/index-kUsvRJV4.css">
+      <script type="module" crossorigin src="./assets/index-Cf808rVo.js"></script>
+      <link rel="stylesheet" crossorigin href="./assets/index-D7ExfQ1h.css">
     </head>
     <body>
         <main>
@@ -14,6 +14,11 @@
                 <button id="toggle" type="button" aria-pressed="false">Start</button>
                 <button id="save" type="button" class="secondary" disabled>Save recording</button>
                 <span id="status">Stopped</span>
+            </div>
+            <div class="controls background">
+                <button id="calibrate" type="button" class="secondary" disabled>Calibrate background</button>
+                <button id="clear-bg" type="button" class="secondary" disabled>Clear</button>
+                <span id="bg-status" aria-live="polite"></span>
             </div>
             <p id="error" role="alert"></p>
 
@@ -28,12 +33,13 @@
 
             <section class="panel chart">
                 <h2>Latest ping</h2>
-                <p class="subtitle">Matched-filter envelope in dB relative to the direct path, by distance</p>
+                <p class="subtitle">Matched-filter envelope in dB relative to the direct path, by distance, with the calibrated background removed</p>
                 <div class="legend">
                     <span><span class="key" style="background: var(--series-1)"></span>Correlation</span>
                     <span><span class="key band" style="background: var(--series-2)"></span>Estimate ± σ</span>
                     <span><span class="key stem"></span>Peak prominence (thick: enough)</span>
                     <span><span class="key dashed"></span>Min SNR</span>
+                    <span><span class="key band removed"></span>Removed background</span>
                 </div>
                 <div class="plot">
                     <canvas id="ascan"></canvas>
