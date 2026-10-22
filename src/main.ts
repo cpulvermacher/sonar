@@ -4,14 +4,8 @@ import {
     openAudio,
     startPinging,
 } from './audio';
-import {
-    clearBackground,
-    loadBackground,
-    type StoredBackground,
-    saveBackground,
-} from './background-store';
 import { DEFAULT_CONFIG } from './config';
-import { speedOfSound } from './dsp';
+import { type Background, backgroundPower, speedOfSound } from './dsp';
 import { DistanceEstimator } from './estimate';
 import type { FromWorker, ToWorker } from './messages';
 import { encodeRecording, Recorder } from './recording';
@@ -72,7 +66,9 @@ let pingCount = 0;
 const recorder = new Recorder(RECORDING_PINGS);
 let recordingInfo: { sampleRate: number; chirp: Float32Array } | null = null;
 
-let background: StoredBackground | null = null;
+// Only valid for this session: it depends on how the phone is held or what
+// it lies on, so it is not kept across sessions.
+let background: { createdAt: Date; value: Background } | null = null;
 /** Pings still to go while calibrating, else null. */
 let calibrationLeft: number | null = null;
 
@@ -80,10 +76,11 @@ function post(msg: ToWorker) {
     session?.worker.postMessage(msg);
 }
 
-/** Sends the current background to the worker and the view. */
-function applyBackground() {
-    post({ type: 'background', power: background?.power.slice() ?? null });
-    view.setBackground(background?.power ?? null);
+/** Drops the background, in the worker and the view. */
+function clearBackground() {
+    background = null;
+    post({ type: 'background', background: null });
+    view.setBackground(null);
     renderBackground();
 }
 
@@ -93,17 +90,17 @@ function renderBackground() {
     clearBgButton.disabled =
         !running || !background || calibrationLeft !== null;
     if (calibrationLeft !== null) {
-        bgStatus.textContent = `Calibrating… ${calibrationLeft} pings to go. Keep the phone still, pointed at open space.`;
+        bgStatus.textContent = `Calibrating… ${calibrationLeft} pings to go. Hold the phone as you will when measuring, pointed at open space.`;
     } else if (background && session) {
         const range =
-            (background.power.length * speedOfSound(config.temperature)) /
+            (background.value.re.length * speedOfSound(config.temperature)) /
             session.ctx.sampleRate /
             2;
-        const when = new Date(background.createdAt).toLocaleString();
-        bgStatus.textContent = `Background calibrated ${when}; removes the phone's own echoes up to ${range.toFixed(2)} m.`;
+        const when = background.createdAt.toLocaleTimeString();
+        bgStatus.textContent = `Background calibrated at ${when}; removes the phone's own echoes up to ${range.toFixed(2)} m. Recalibrate after changing your grip or the phone's surroundings.`;
     } else if (running) {
         bgStatus.textContent =
-            'No background calibrated. Point the phone at open space (nothing within about 1 m), then press Calibrate background.';
+            'No background calibrated. Hold the phone as you will when measuring, point it at open space (nothing within about 1 m), then press Calibrate background.';
     } else {
         bgStatus.textContent = '';
     }
@@ -159,14 +156,10 @@ function onWorkerMessage(msg: FromWorker) {
             break;
         }
         case 'calibration': {
-            if (msg.power) {
+            if (msg.background) {
                 calibrationLeft = null;
-                background = {
-                    createdAt: new Date().toISOString(),
-                    power: msg.power,
-                };
-                saveBackground(session.ctx.sampleRate, config, background);
-                view.setBackground(background.power);
+                background = { createdAt: new Date(), value: msg.background };
+                view.setBackground(backgroundPower(msg.background));
                 // Echoes so far were found with the old background.
                 estimator.reset();
             } else {
@@ -207,8 +200,7 @@ button.addEventListener('click', async () => {
                 pingCount = id + 1;
             });
             recordingInfo = { sampleRate: session.ctx.sampleRate, chirp };
-            background = loadBackground(session.ctx.sampleRate, config);
-            applyBackground();
+            clearBackground();
             status.textContent = `${session.ctx.sampleRate} Hz`;
             setRunning(true);
         }
@@ -237,9 +229,7 @@ clearBgButton.addEventListener('click', () => {
     if (!session) {
         return;
     }
-    clearBackground(session.ctx.sampleRate, config);
-    background = null;
-    applyBackground();
+    clearBackground();
     estimator.reset();
 });
 
@@ -254,7 +244,7 @@ saveButton.addEventListener('click', () => {
         sampleRate: recordingInfo.sampleRate,
         config,
         chirp: recordingInfo.chirp,
-        background: background?.power ?? null,
+        background: background?.value ?? null,
         pings: recorder.snapshot(),
     });
     const url = URL.createObjectURL(

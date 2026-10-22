@@ -5,8 +5,9 @@ import { BANDS, type SonarConfig } from './config';
 import {
     type AnalysisParams,
     analyzePing,
+    type Background,
+    type ComplexArray,
     delaySigma,
-    directProfile,
     highpassBiquad,
     makeBackground,
     nextPow2,
@@ -27,15 +28,13 @@ interface Job {
     /** RMS bandwidth of the chirp in Hz, for the delay uncertainty. */
     bandwidth: number;
     params: AnalysisParams;
-    /** Power ratio for Background.margin. */
-    backgroundMargin: number;
     /** Samples analysed per ping, starting at emitFrame. */
     windowLength: number;
 }
 
 interface Calibration {
     left: number;
-    profiles: Float32Array[];
+    profiles: ComplexArray[];
     /** Sum of the per-ping noise power relative to the direct peak. */
     noisePower: number;
 }
@@ -53,7 +52,7 @@ let framesReceived = 0;
 let lastStats = 0;
 let job: Job | null = null;
 let pending: PendingPing[] = [];
-let background: Float32Array | null = null;
+let background: Background | null = null;
 let calibration: Calibration | null = null;
 
 function post(msg: FromWorker, transfer: Transferable[] = []) {
@@ -83,8 +82,6 @@ function makeJob(config: SonarConfig, chirp: Float32Array): Job {
             // Envelope amplitudes, so dB / 20.
             minProminence: 10 ** (config.minEchoProminenceDb / 20),
         },
-        // Powers, so dB / 10.
-        backgroundMargin: 10 ** (config.backgroundMarginDb / 10),
     };
 }
 
@@ -143,16 +140,10 @@ function analyse(job: Job, ping: PendingPing) {
     for (let i = 0; i < x.length; i++) {
         x[i] = ring[(ping.emitFrame + i) & mask];
     }
-    const result = analyzePing(x, job.chirp, {
-        ...job.params,
-        background: background && {
-            power: background,
-            margin: job.backgroundMargin,
-        },
-    });
+    const result = analyzePing(x, job.chirp, { ...job.params, background });
     const { maxLag } = job.params;
     if (calibration) {
-        calibrate(calibration, result, maxLag + 1, job.params.blank);
+        calibrate(calibration, result, job.params.blank);
     }
 
     // Envelope for display (with the background removed): from slightly
@@ -211,17 +202,15 @@ function analyse(job: Job, ping: PendingPing) {
 function calibrate(
     cal: Calibration,
     result: ReturnType<typeof analyzePing>,
-    length: number,
     start: number
 ) {
-    const d = Math.round(result.direct.index);
-    cal.profiles.push(directProfile(result.envelope, d, length));
+    cal.profiles.push(result.profile);
     // Mean noise power from the median of a Rayleigh-distributed envelope.
     cal.noisePower +=
         (result.noiseFloor / result.direct.amplitude) ** 2 / Math.LN2;
     cal.left--;
     if (cal.left > 0) {
-        post({ type: 'calibration', left: cal.left, power: null });
+        post({ type: 'calibration', left: cal.left, background: null });
         return;
     }
     calibration = null;
@@ -230,7 +219,11 @@ function calibrate(
         cal.noisePower / cal.profiles.length,
         start
     );
-    post({ type: 'calibration', left: 0, power: background.slice() });
+    post({
+        type: 'calibration',
+        left: 0,
+        background: { re: background.re.slice(), im: background.im.slice() },
+    });
 }
 
 self.onmessage = (e: MessageEvent<ToWorker>) => {
@@ -256,7 +249,7 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
             calibration = { left: msg.pings, profiles: [], noisePower: 0 };
             break;
         case 'background':
-            background = msg.power;
+            background = msg.background;
             break;
     }
 };

@@ -33,7 +33,6 @@ export interface ViewOptions {
     interval: number;
     minEchoSnrDb: number;
     minEchoProminenceDb: number;
-    backgroundMarginDb: number;
 }
 
 /** Lowest level shown, in dB relative to the direct path. */
@@ -507,7 +506,8 @@ export class SonarView {
         ctx.globalAlpha = 1;
 
         if (ping && this.background) {
-            // What is removed: the background plus its margin.
+            // The level of what is subtracted (coherently, so echoes below
+            // it can still show).
             const bg = this.background;
             const start = Math.ceil(minRange / ping.metresPerSample);
             ctx.fillStyle = t.textMuted;
@@ -515,9 +515,7 @@ export class SonarView {
             ctx.beginPath();
             ctx.moveTo(xScale(start * ping.metresPerSample), p.y + p.h);
             for (let j = start; j < bg.length; j++) {
-                const db =
-                    10 * Math.log10(Math.max(bg[j], 1e-12)) +
-                    this.options.backgroundMarginDb;
+                const db = 10 * Math.log10(Math.max(bg[j], 1e-12));
                 ctx.lineTo(
                     xScale(j * ping.metresPerSample),
                     yScale(Math.max(DB_FLOOR, Math.min(0, db)))

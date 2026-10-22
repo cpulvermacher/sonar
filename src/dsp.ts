@@ -138,13 +138,21 @@ export function fft(re: Float64Array, im: Float64Array, inverse = false): void {
     }
 }
 
+/** Complex samples, as separate real and imaginary parts. */
+export interface ComplexArray<T = Float32Array> {
+    re: T;
+    im: T;
+}
+
 /**
- * Envelope of the cross-correlation of x with the template h:
- * env[l] = |Σ x[n + l] · h[n]| of the analytic signal, for lags 0..x.length-1.
- * Using the analytic signal (negative frequencies zeroed) gives a smooth
- * envelope instead of a correlation that oscillates at the carrier frequency.
+ * Spectrum of the analytic cross-correlation of x with the template h:
+ * X · conj(H) with the negative frequencies zeroed. Its inverse FFT at lag l
+ * is Σ x[n + l] · h[n] plus j times its Hilbert transform.
  */
-export function xcorrEnvelope(x: Float32Array, h: Float32Array): Float32Array {
+function xcorrSpectrum(
+    x: Float32Array,
+    h: Float32Array
+): ComplexArray<Float64Array> {
     const n = nextPow2(x.length + h.length);
     const xr = new Float64Array(n);
     const xi = new Float64Array(n);
@@ -154,7 +162,6 @@ export function xcorrEnvelope(x: Float32Array, h: Float32Array): Float32Array {
     hr.set(h);
     fft(xr, xi);
     fft(hr, hi);
-    // X · conj(H), one-sided spectrum.
     for (let k = 0; k < n; k++) {
         const scale = k === 0 || k === n / 2 ? 1 : k < n / 2 ? 2 : 0;
         const re = xr[k] * hr[k] + xi[k] * hi[k];
@@ -162,12 +169,55 @@ export function xcorrEnvelope(x: Float32Array, h: Float32Array): Float32Array {
         xr[k] = re * scale;
         xi[k] = im * scale;
     }
-    fft(xr, xi, true);
-    const env = new Float32Array(x.length);
-    for (let i = 0; i < x.length; i++) {
-        env[i] = Math.hypot(xr[i], xi[i]);
+    return { re: xr, im: xi };
+}
+
+/**
+ * The correlation from its spectrum, advanced by `shift` samples (which may
+ * be fractional): out[l] is the correlation at lag l + shift.
+ */
+function correlationAt(
+    spectrum: ComplexArray<Float64Array>,
+    shift: number
+): ComplexArray<Float64Array> {
+    const n = spectrum.re.length;
+    const re = spectrum.re.slice();
+    const im = spectrum.im.slice();
+    if (shift !== 0) {
+        for (let k = 0; k < n; k++) {
+            // A real (two-sided) frequency index, so the phase ramp is smooth
+            // around n/2; only k < n/2 is non-zero anyway.
+            const w = (2 * Math.PI * (k < n / 2 ? k : k - n) * shift) / n;
+            const c = Math.cos(w);
+            const s = Math.sin(w);
+            const r = re[k] * c - im[k] * s;
+            im[k] = re[k] * s + im[k] * c;
+            re[k] = r;
+        }
     }
-    return env;
+    fft(re, im, true);
+    return { re, im };
+}
+
+function magnitude(
+    y: ComplexArray<Float64Array>,
+    length: number
+): Float32Array {
+    const out = new Float32Array(length);
+    for (let i = 0; i < length; i++) {
+        out[i] = Math.hypot(y.re[i], y.im[i]);
+    }
+    return out;
+}
+
+/**
+ * Envelope of the cross-correlation of x with the template h:
+ * env[l] = |Σ x[n + l] · h[n]| of the analytic signal, for lags 0..x.length-1.
+ * Using the analytic signal (negative frequencies zeroed) gives a smooth
+ * envelope instead of a correlation that oscillates at the carrier frequency.
+ */
+export function xcorrEnvelope(x: Float32Array, h: Float32Array): Float32Array {
+    return magnitude(correlationAt(xcorrSpectrum(x, h), 0), x.length);
 }
 
 /** Index of the maximum of y in [from, to). */
@@ -281,22 +331,28 @@ export interface PingAnalysis {
     candidates: PeakCandidate[];
     /** Median of the correlation envelope; the noise reference for SNR. */
     noiseFloor: number;
+    /**
+     * Correlation envelope. Like `searched`, it is resampled so that the
+     * direct peak falls exactly on a sample; positions on it are off from
+     * the reported ones by less than half a sample.
+     */
     envelope: Float32Array;
     /** The envelope the echo was searched in: with the background removed, if any. */
     searched: Float32Array;
+    /** The correlation after the direct peak, see Background; maxLag + 1 lags. */
+    profile: ComplexArray;
 }
 
 /**
- * Static clutter close to the device, mostly the speaker's own ringing after
- * the direct path. Its phase is not repeatable between pings on all devices,
- * so only its power is modelled.
+ * Static clutter close to the device: the direct path's own tail, the
+ * speaker's ringing and reflections off the case, the hand holding it or the
+ * surface it lies on. As the complex correlation relative to the direct peak
+ * (divided by its complex value at the peak, after sub-sample alignment),
+ * per sample of lag after it. Within a session it repeats in amplitude and
+ * phase, so it can be subtracted coherently, leaving a wall echo that is
+ * weaker than the clutter it overlaps.
  */
-export interface Background {
-    /** Mean power relative to the direct peak, per sample of lag after it. */
-    power: Float32Array;
-    /** Multiple of that power that is removed; > 1 allows for its fluctuation. */
-    margin: number;
-}
+export type Background = ComplexArray;
 
 export interface AnalysisParams {
     highpass: Biquad;
@@ -307,7 +363,7 @@ export interface AnalysisParams {
     maxLag: number;
     /** Minimum prominence ratio of an echo peak. */
     minProminence: number;
-    /** Removed from the envelope before searching for the echo. */
+    /** Subtracted from the correlation before searching for the echo. */
     background?: Background | null;
 }
 
@@ -323,16 +379,26 @@ export function analyzePing(
     p: AnalysisParams
 ): PingAnalysis {
     const filtered = filtfilt(p.highpass, x);
-    const envelope = xcorrEnvelope(filtered, chirp);
+    const spectrum = xcorrSpectrum(filtered, chirp);
+    const unaligned = magnitude(correlationAt(spectrum, 0), x.length);
+    const d = argmax(
+        unaligned,
+        0,
+        Math.min(p.directSearchEnd, unaligned.length)
+    );
+    const directIndex = parabolicInterp(unaligned, d);
 
-    const d = argmax(envelope, 0, Math.min(p.directSearchEnd, envelope.length));
-    const direct = {
-        index: parabolicInterp(envelope, d),
-        amplitude: envelope[d],
-    };
+    // Resampled so the direct peak is exactly at d. The background is
+    // relative to that peak, so it must be aligned to a fraction of the
+    // carrier period, not just to the nearest sample.
+    const shift = directIndex - d;
+    const corr = correlationAt(spectrum, shift);
+    const envelope = magnitude(corr, x.length);
+    const direct = { index: directIndex, amplitude: envelope[d] };
+    const profile = directProfile(corr, d, p.maxLag + 1);
 
     const searched = p.background
-        ? removeBackground(envelope, d, p.blank, p.background)
+        ? removeBackground(envelope, corr, d, p.blank, p.background)
         : envelope;
     const from = d + p.blank;
     const to = d + p.maxLag + 1;
@@ -340,11 +406,14 @@ export function analyzePing(
     const echo =
         e < 0
             ? null
-            : { index: parabolicInterp(searched, e), amplitude: searched[e] };
+            : {
+                  index: parabolicInterp(searched, e) + shift,
+                  amplitude: searched[e],
+              };
     const candidates = localMaxima(searched, from, to)
         .slice(0, MAX_CANDIDATES)
         .map((i) => ({
-            index: parabolicInterp(searched, i),
+            index: parabolicInterp(searched, i) + shift,
             amplitude: searched[i],
             prominence: prominence(searched, i),
         }));
@@ -356,44 +425,54 @@ export function analyzePing(
         noiseFloor: median(envelope),
         envelope,
         searched,
+        profile,
     };
 }
 
 /**
- * Envelope power relative to the direct peak at index d, for lags
- * 0..length-1 after it (0 past the end of the envelope).
+ * The correlation for lags 0..length-1 after the direct peak at d, divided
+ * by its value at d (0 past the end of the recording).
  */
-export function directProfile(
-    envelope: Float32Array,
+function directProfile(
+    corr: ComplexArray<Float64Array>,
     d: number,
     length: number
-): Float32Array {
-    const out = new Float32Array(length);
-    const a = envelope[d];
-    for (let j = 0; j < length && d + j < envelope.length; j++) {
-        out[j] = (envelope[d + j] / a) ** 2;
+): ComplexArray {
+    const re = new Float32Array(length);
+    const im = new Float32Array(length);
+    const ar = corr.re[d];
+    const ai = corr.im[d];
+    const a2 = ar * ar + ai * ai;
+    for (let j = 0; j < length && d + j < corr.re.length; j++) {
+        const yr = corr.re[d + j];
+        const yi = corr.im[d + j];
+        re[j] = (yr * ar + yi * ai) / a2;
+        im[j] = (yi * ar - yr * ai) / a2;
     }
-    return out;
+    return { re, im };
 }
 
 /**
- * Background power from calibration profiles (see directProfile): their mean,
- * widened by ±widen lags so that small misalignments leave no residue. It ends
- * where its local average drops below minAboveNoise × noisePower, so that only
- * the device's own tail is removed, not objects further out in the
- * calibration scene. Lags before `start` are never used.
+ * Background from calibration profiles (PingAnalysis.profile): their complex
+ * mean. It ends where its local power drops below minAboveNoise × noisePower
+ * (relative to the direct peak), so that only the device's own clutter is
+ * removed, not objects further out in the calibration scene, which would
+ * otherwise come back as ghosts once they are gone. Lags before `start` are
+ * never used.
  */
 export function makeBackground(
-    profiles: Float32Array[],
+    profiles: ComplexArray[],
     noisePower: number,
     start: number,
-    { widen = 2, smooth = 8, minAboveNoise = 4 } = {}
-): Float32Array {
-    const length = Math.min(...profiles.map((p) => p.length));
-    const mean = new Float64Array(length);
+    { smooth = 8, minAboveNoise = 4 } = {}
+): Background {
+    const length = Math.min(...profiles.map((p) => p.re.length));
+    const re = new Float32Array(length);
+    const im = new Float32Array(length);
     for (const p of profiles) {
         for (let j = 0; j < length; j++) {
-            mean[j] += p[j] / profiles.length;
+            re[j] += p.re[j] / profiles.length;
+            im[j] += p.im[j] / profiles.length;
         }
     }
     let end = start;
@@ -405,47 +484,43 @@ export function makeBackground(
             k <= Math.min(length - 1, end + smooth);
             k++
         ) {
-            sum += mean[k];
+            sum += re[k] * re[k] + im[k] * im[k];
             n++;
         }
         if (sum / n < minAboveNoise * noisePower) {
             break;
         }
     }
-    const out = new Float32Array(end);
-    for (let j = 0; j < end; j++) {
-        let m = 0;
-        for (
-            let k = Math.max(0, j - widen);
-            k <= Math.min(length - 1, j + widen);
-            k++
-        ) {
-            m = Math.max(m, mean[k]);
-        }
-        out[j] = m;
-    }
-    return out;
+    return { re: re.slice(0, end), im: im.slice(0, end) };
 }
 
 /**
- * A copy of the envelope with margin × background power removed from lags
- * `start` onwards after the direct peak at d. What would go negative is 0.
+ * A copy of the envelope in which lags `start` onwards after the direct peak
+ * at d are replaced by the magnitude of the correlation minus the background,
+ * scaled to this ping's direct peak.
  */
 export function removeBackground(
     envelope: Float32Array,
+    corr: ComplexArray<ArrayLike<number>>,
     d: number,
     start: number,
     bg: Background
 ): Float32Array {
     const out = envelope.slice();
-    const a2 = envelope[d] ** 2;
-    for (let j = start; j < bg.power.length && d + j < out.length; j++) {
-        const v = envelope[d + j];
-        out[d + j] = Math.sqrt(
-            Math.max(0, v * v - bg.margin * bg.power[j] * a2)
+    const ar = corr.re[d];
+    const ai = corr.im[d];
+    for (let j = start; j < bg.re.length && d + j < out.length; j++) {
+        out[d + j] = Math.hypot(
+            corr.re[d + j] - (bg.re[j] * ar - bg.im[j] * ai),
+            corr.im[d + j] - (bg.re[j] * ai + bg.im[j] * ar)
         );
     }
     return out;
+}
+
+/** Power of the background relative to the direct peak, per lag. */
+export function backgroundPower(bg: Background): Float32Array {
+    return bg.re.map((r, j) => r * r + bg.im[j] * bg.im[j]);
 }
 
 /**

@@ -37,6 +37,10 @@ describe('recording file', () => {
             sampleRate: 48000,
             config: DEFAULT_CONFIG,
             chirp,
+            background: {
+                re: Float32Array.from([0.5, -0.1]),
+                im: Float32Array.from([0, 0.25]),
+            },
             pings: [
                 {
                     pingId: 7,
@@ -52,6 +56,7 @@ describe('recording file', () => {
         expect(rec.sampleRate).toBe(48000);
         expect(rec.config).toEqual(DEFAULT_CONFIG);
         expect(rec.chirp).toEqual(chirp);
+        expect(rec.background?.im).toEqual(Float32Array.from([0, 0.25]));
         expect(rec.pings).toHaveLength(1);
         expect(rec.pings[0].samples).toEqual(samples);
         expect(rec.pings[0].echo).toBe(1500.5);

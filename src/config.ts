@@ -36,8 +36,6 @@ export interface SonarConfig {
     minEchoSnrDb: number;
     /** An echo peak must rise this much (dB) above the trough before a taller neighbour. */
     minEchoProminenceDb: number;
-    /** A calibrated background is removed this much (dB) above its mean power. */
-    backgroundMarginDb: number;
 }
 
 export const DEFAULT_CONFIG: SonarConfig = {
@@ -52,5 +50,4 @@ export const DEFAULT_CONFIG: SonarConfig = {
     averagePings: 10,
     minEchoSnrDb: 18,
     minEchoProminenceDb: 6,
-    backgroundMarginDb: 6,
 };

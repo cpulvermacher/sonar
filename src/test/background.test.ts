@@ -1,120 +1,122 @@
-// Background removal on real recordings from an Android phone (Firefox,
-// 96 kHz), trimmed to the part around the direct path. The phone's own
-// ringing produces a spurious "echo" at about 0.17 m.
+// Background removal on a real recording from an Android phone (Firefox,
+// 96 kHz), trimmed to the part around the direct path: the phone held in
+// hand and moved from about 1.4 m away from a wall to touching it, one ping
+// every 0.25 s. The phone's own clutter produces a spurious "echo" at about
+// 0.17 m that is stronger than the wall.
 import { describe, expect, it } from 'vitest';
 import { BANDS, DEFAULT_CONFIG } from '../config';
 import {
     type AnalysisParams,
     analyzePing,
-    directProfile,
+    type Background,
     highpassBiquad,
     makeBackground,
-    peakSnr,
     removeBackground,
     speedOfSound,
 } from '../dsp';
-import { decodeRecording, type Recording } from '../recording';
-import freespaceJson from './fixtures/freespace.json?raw';
-import hand20Json from './fixtures/hand20cm.json?raw';
-import wall50Json from './fixtures/wall50cm.json?raw';
+import { decodeRecording } from '../recording';
+import sweepJson from './fixtures/sweep-to-wall.json?raw';
 
-const freespace = decodeRecording(freespaceJson);
-const wall50 = decodeRecording(wall50Json);
-const hand20 = decodeRecording(hand20Json);
+const sweep = decodeRecording(sweepJson);
 
-// As in the worker's makeJob. The recordings predate some settings.
-const config = { ...DEFAULT_CONFIG, ...freespace.config };
-const fs = freespace.sampleRate;
+// As in the worker's makeJob.
+const config = { ...DEFAULT_CONFIG, ...sweep.config };
+const fs = sweep.sampleRate;
 const band = BANDS[config.band];
 const c = speedOfSound(config.temperature);
 const metresPerSample = c / fs / 2;
-const maxLag = Math.ceil(((2 * config.maxRange) / c) * fs);
 const params: AnalysisParams = {
     highpass: highpassBiquad(fs, 0.7 * band.f0),
-    // The fixtures start 400 samples before the direct path.
+    // The fixture starts 400 samples before the direct path.
     directSearchEnd: 1000,
     blank: Math.max(
         Math.ceil(((2 * config.minRange) / c) * fs),
         Math.ceil((2 / (band.f1 - band.f0)) * fs)
     ),
-    maxLag,
+    maxLag: Math.ceil(((2 * config.maxRange) / c) * fs),
     minProminence: 10 ** (config.minEchoProminenceDb / 20),
 };
-const margin = 10 ** (config.backgroundMarginDb / 10);
 
-function calibrate(rec: Recording): Float32Array {
+/** Pings with the wall still beyond 1.3 m, used for calibration. */
+const CALIBRATION = 8;
+/** Pings while the wall comes from about 0.95 m to 0.3 m. */
+const APPROACH = sweep.pings.slice(9, 21);
+
+function calibrate(): Background {
+    const pings = sweep.pings.slice(0, CALIBRATION);
     let noisePower = 0;
-    const profiles = rec.pings.map((p) => {
-        const r = analyzePing(p.samples, rec.chirp, params);
+    const profiles = pings.map((p) => {
+        const r = analyzePing(p.samples, sweep.chirp, params);
         noisePower += (r.noiseFloor / r.direct.amplitude) ** 2 / Math.LN2;
-        return directProfile(
-            r.envelope,
-            Math.round(r.direct.index),
-            maxLag + 1
-        );
+        return r.profile;
     });
-    return makeBackground(profiles, noisePower / profiles.length, params.blank);
+    return makeBackground(profiles, noisePower / pings.length, params.blank);
 }
 
-/** Per ping: distance in m of an echo that passes the SNR threshold, or null. */
-function distances(rec: Recording, power: Float32Array | null) {
-    return rec.pings.map((p) => {
-        const r = analyzePing(p.samples, rec.chirp, {
-            ...params,
-            background: power && { power, margin },
-        });
-        if (
-            !r.echo ||
-            10 * Math.log10(peakSnr(r.echo.amplitude, r.noiseFloor)) <
-                config.minEchoSnrDb
-        ) {
-            return null;
-        }
-        return (r.echo.index - r.direct.index) * metresPerSample;
-    });
+/**
+ * Distance in m of the echo, or null. No SNR threshold: in the trimmed
+ * fixture the noise floor (the envelope median) is mostly clutter, so SNRs
+ * come out about 20 dB lower than in the full window the app analyses.
+ */
+function distance(samples: Float32Array, background: Background | null) {
+    const r = analyzePing(samples, sweep.chirp, { ...params, background });
+    return r.echo && (r.echo.index - r.direct.index) * metresPerSample;
 }
 
-const background = calibrate(freespace);
+const background = calibrate();
 
 describe('background calibration', () => {
-    it('covers only the near range where the phone rings', () => {
-        const range = background.length * metresPerSample;
-        expect(range).toBeGreaterThan(0.25);
+    it('covers only the near range of the phone itself', () => {
+        const range = background.re.length * metresPerSample;
+        expect(range).toBeGreaterThan(0.2);
         expect(range).toBeLessThan(1);
     });
 
-    it('never touches the direct path or the blanked range', () => {
-        const env = Float32Array.from({ length: 50 }, () => 1);
-        const out = removeBackground(env, 10, 5, {
-            power: new Float32Array(20).fill(1),
-            margin: 4,
-        });
-        expect(Array.from(out.subarray(0, 15))).toEqual(Array(15).fill(1));
-        expect(Array.from(out.subarray(15, 30))).toEqual(Array(15).fill(0));
-        expect(Array.from(out.subarray(30))).toEqual(Array(20).fill(1));
+    it('subtracts the background scaled by the direct peak, after the blanked range', () => {
+        const bg = {
+            re: Float32Array.from({ length: 20 }, (_, j) => Math.cos(j)),
+            im: Float32Array.from({ length: 20 }, (_, j) => Math.sin(j)),
+        };
+        // The direct peak at d = 10 is 2j; from then on exactly 2j · bg.
+        const re = new Float64Array(50).fill(3);
+        const im = new Float64Array(50);
+        for (let j = 0; j < 20; j++) {
+            re[10 + j] = -2 * bg.im[j];
+            im[10 + j] = 2 * bg.re[j];
+        }
+        const env = Float32Array.from(re, (r, i) => Math.hypot(r, im[i]));
+        const out = removeBackground(env, { re, im }, 10, 5, bg);
+        expect(Array.from(out.subarray(0, 15))).toEqual(
+            Array.from(env.subarray(0, 15))
+        );
+        for (const v of out.subarray(15, 30)) {
+            expect(v).toBeCloseTo(0, 6);
+        }
+        expect(Array.from(out.subarray(30))).toEqual(Array(20).fill(3));
     });
 });
 
-describe('echo picking on recordings', () => {
-    it('without a background, picks the ringing instead of a wall at 50 cm', () => {
-        for (const d of distances(wall50, null)) {
+describe('echo picking on the sweep', () => {
+    it('without a background, picks the clutter instead of the wall', () => {
+        for (const p of APPROACH) {
+            const d = distance(p.samples, null);
+            expect(d).toBeGreaterThan(0.15);
+            expect(d).toBeLessThan(0.19);
+        }
+    });
+
+    it('with the background, follows the wall in', () => {
+        const ds = APPROACH.map((p) => distance(p.samples, background));
+        for (const d of ds) {
             expect(d).not.toBeNull();
-            expect(d).toBeLessThan(0.25);
+            expect(d).toBeGreaterThan(0.25);
         }
-    });
-
-    it('with the background, finds the wall at 50 cm in every ping', () => {
-        // The phone reads about 4 cm short; see the offset calibration.
-        for (const d of distances(wall50, background)) {
-            expect(d).toBeGreaterThan(0.44);
-            expect(d).toBeLessThan(0.48);
+        const found = ds as number[];
+        expect(found[0]).toBeGreaterThan(0.85);
+        expect(found[found.length - 1]).toBeLessThan(0.5);
+        // Moved by hand, about 5 cm per ping; allow some jitter.
+        for (let k = 1; k < found.length; k++) {
+            expect(found[k]).toBeLessThan(found[k - 1] + 0.07);
         }
-    });
-
-    it('with the background, finds a hand at about 20 cm', () => {
-        const found = distances(hand20, background).filter(
-            (d) => d !== null && d > 0.2 && d < 0.3
-        );
-        expect(found.length).toBeGreaterThanOrEqual(6);
     });
 });

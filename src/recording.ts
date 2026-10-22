@@ -3,9 +3,11 @@
 // base64-encoded little-endian float32.
 
 import type { SonarConfig } from './config';
+import type { Background } from './dsp';
 
 const FORMAT = 'sonar-recording';
-const VERSION = 1;
+/** Version 1 stored a background power profile, which is not used any more. */
+const VERSION = 2;
 
 export interface RecordedPing {
     pingId: number;
@@ -24,17 +26,17 @@ export interface Recording {
     sampleRate: number;
     config: SonarConfig;
     chirp: Float32Array;
-    /** Background power profile in use (dsp.Background), if any. */
-    background?: Float32Array | null;
+    /** Background in use, if any. */
+    background?: Background | null;
     pings: RecordedPing[];
 }
 
 interface RecordingFile
     extends Omit<Recording, 'chirp' | 'background' | 'pings'> {
     format: typeof FORMAT;
-    version: typeof VERSION;
+    version: 1 | typeof VERSION;
     chirp: string;
-    background?: string | null;
+    background?: { re: string; im: string } | string | null;
     pings: (Omit<RecordedPing, 'samples'> & { samples: string })[];
 }
 
@@ -73,7 +75,12 @@ export function encodeRecording(rec: Recording): string {
         sampleRate: rec.sampleRate,
         config: rec.config,
         chirp: toBase64(rec.chirp),
-        background: rec.background ? toBase64(rec.background) : null,
+        background: rec.background
+            ? {
+                  re: toBase64(rec.background.re),
+                  im: toBase64(rec.background.im),
+              }
+            : null,
         pings: rec.pings.map((p) => ({ ...p, samples: toBase64(p.samples) })),
     };
     return JSON.stringify(file);
@@ -81,16 +88,23 @@ export function encodeRecording(rec: Recording): string {
 
 export function decodeRecording(json: string): Recording {
     const file = JSON.parse(json) as RecordingFile;
-    if (file.format !== FORMAT || file.version !== VERSION) {
+    if (
+        file.format !== FORMAT ||
+        (file.version !== 1 && file.version !== VERSION)
+    ) {
         throw new Error('Not a sonar recording (or an unsupported version)');
     }
+    const bg = file.background;
     return {
         createdAt: file.createdAt,
         userAgent: file.userAgent,
         sampleRate: file.sampleRate,
         config: file.config,
         chirp: fromBase64(file.chirp),
-        background: file.background ? fromBase64(file.background) : null,
+        background:
+            bg && typeof bg === 'object'
+                ? { re: fromBase64(bg.re), im: fromBase64(bg.im) }
+                : null,
         pings: file.pings.map((p) => ({
             ...p,
             samples: fromBase64(p.samples),

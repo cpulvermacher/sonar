@@ -1,7 +1,7 @@
 // Message types shared between the main thread, the capture worklet and the DSP worker.
 
 import type { SonarConfig } from './config';
-import type { PeakCandidate } from './dsp';
+import type { Background, PeakCandidate } from './dsp';
 
 /** Worklet -> worker: a batch of consecutive mic samples. */
 export interface CaptureBlock {
@@ -35,9 +35,9 @@ export type ToWorker =
           pings: number;
       }
     | {
-          /** Use this background power profile (see dsp.Background), or none. */
+          /** Use this background (see dsp.Background), or none. */
           type: 'background';
-          power: Float32Array | null;
+          background: Background | null;
       };
 
 /** Worker -> main. */
@@ -71,8 +71,8 @@ export type FromWorker =
           raw: Float32Array;
       }
     | {
-          /** Calibration progress; `power` is set (and in use) once `left` is 0. */
+          /** Calibration progress; `background` is set (and in use) once `left` is 0. */
           type: 'calibration';
           left: number;
-          power: Float32Array | null;
+          background: Background | null;
       };
