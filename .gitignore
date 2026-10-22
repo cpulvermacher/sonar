@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Full recordings saved from the app (trimmed copies live in src/test/fixtures)
+/sonar-*.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

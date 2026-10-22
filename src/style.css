@@ -108,6 +108,11 @@ button:disabled {
     flex-wrap: wrap;
 }
 
+.controls.background {
+    margin-top: 8px;
+}
+
+#bg-status,
 #status {
     color: var(--text-muted);
     font-size: 13px;
@@ -204,6 +209,11 @@ button:disabled {
     height: 12px;
     margin: 0 10px 0 4px;
     background: var(--text-secondary);
+}
+
+.legend .removed {
+    background: var(--text-muted);
+    opacity: 0.4;
 }
 
 .legend .dashed {

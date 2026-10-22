@@ -33,6 +33,7 @@ export interface ViewOptions {
     interval: number;
     minEchoSnrDb: number;
     minEchoProminenceDb: number;
+    backgroundMarginDb: number;
 }
 
 /** Lowest level shown, in dB relative to the direct path. */
@@ -174,6 +175,8 @@ class Surface {
 export class SonarView {
     private theme = readTheme();
     private latest: PingView | null = null;
+    /** Background power relative to the direct path, per sample of lag. */
+    private background: Float32Array | null = null;
     private columns: Column[] = [];
     private recent: PingView[] = [];
     private ascan: Surface;
@@ -247,6 +250,11 @@ export class SonarView {
         this.recent.length = Math.min(this.recent.length, TABLE_ROWS);
         this.renderReadout();
         this.renderTable();
+        this.invalidate();
+    }
+
+    setBackground(power: Float32Array | null): void {
+        this.background = power;
         this.invalidate();
     }
 
@@ -497,6 +505,29 @@ export class SonarView {
         ctx.globalAlpha = 0.1;
         ctx.fillRect(xScale(0), p.y, xScale(minRange) - xScale(0), p.h);
         ctx.globalAlpha = 1;
+
+        if (ping && this.background) {
+            // What is removed: the background plus its margin.
+            const bg = this.background;
+            const start = Math.ceil(minRange / ping.metresPerSample);
+            ctx.fillStyle = t.textMuted;
+            ctx.globalAlpha = 0.25;
+            ctx.beginPath();
+            ctx.moveTo(xScale(start * ping.metresPerSample), p.y + p.h);
+            for (let j = start; j < bg.length; j++) {
+                const db =
+                    10 * Math.log10(Math.max(bg[j], 1e-12)) +
+                    this.options.backgroundMarginDb;
+                ctx.lineTo(
+                    xScale(j * ping.metresPerSample),
+                    yScale(Math.max(DB_FLOOR, Math.min(0, db)))
+                );
+            }
+            ctx.lineTo(xScale(bg.length * ping.metresPerSample), p.y + p.h);
+            ctx.closePath();
+            ctx.fill();
+            ctx.globalAlpha = 1;
+        }
 
         if (ping) {
             const ref = this.reference(ping);

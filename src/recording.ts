@@ -24,13 +24,17 @@ export interface Recording {
     sampleRate: number;
     config: SonarConfig;
     chirp: Float32Array;
+    /** Background power profile in use (dsp.Background), if any. */
+    background?: Float32Array | null;
     pings: RecordedPing[];
 }
 
-interface RecordingFile extends Omit<Recording, 'chirp' | 'pings'> {
+interface RecordingFile
+    extends Omit<Recording, 'chirp' | 'background' | 'pings'> {
     format: typeof FORMAT;
     version: typeof VERSION;
     chirp: string;
+    background?: string | null;
     pings: (Omit<RecordedPing, 'samples'> & { samples: string })[];
 }
 
@@ -69,6 +73,7 @@ export function encodeRecording(rec: Recording): string {
         sampleRate: rec.sampleRate,
         config: rec.config,
         chirp: toBase64(rec.chirp),
+        background: rec.background ? toBase64(rec.background) : null,
         pings: rec.pings.map((p) => ({ ...p, samples: toBase64(p.samples) })),
     };
     return JSON.stringify(file);
@@ -85,6 +90,7 @@ export function decodeRecording(json: string): Recording {
         sampleRate: file.sampleRate,
         config: file.config,
         chirp: fromBase64(file.chirp),
+        background: file.background ? fromBase64(file.background) : null,
         pings: file.pings.map((p) => ({
             ...p,
             samples: fromBase64(p.samples),

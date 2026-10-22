@@ -282,6 +282,20 @@ export interface PingAnalysis {
     /** Median of the correlation envelope; the noise reference for SNR. */
     noiseFloor: number;
     envelope: Float32Array;
+    /** The envelope the echo was searched in: with the background removed, if any. */
+    searched: Float32Array;
+}
+
+/**
+ * Static clutter close to the device, mostly the speaker's own ringing after
+ * the direct path. Its phase is not repeatable between pings on all devices,
+ * so only its power is modelled.
+ */
+export interface Background {
+    /** Mean power relative to the direct peak, per sample of lag after it. */
+    power: Float32Array;
+    /** Multiple of that power that is removed; > 1 allows for its fluctuation. */
+    margin: number;
 }
 
 export interface AnalysisParams {
@@ -293,6 +307,8 @@ export interface AnalysisParams {
     maxLag: number;
     /** Minimum prominence ratio of an echo peak. */
     minProminence: number;
+    /** Removed from the envelope before searching for the echo. */
+    background?: Background | null;
 }
 
 /**
@@ -315,19 +331,22 @@ export function analyzePing(
         amplitude: envelope[d],
     };
 
+    const searched = p.background
+        ? removeBackground(envelope, d, p.blank, p.background)
+        : envelope;
     const from = d + p.blank;
     const to = d + p.maxLag + 1;
-    const e = largestProminentPeak(envelope, from, to, p.minProminence);
+    const e = largestProminentPeak(searched, from, to, p.minProminence);
     const echo =
         e < 0
             ? null
-            : { index: parabolicInterp(envelope, e), amplitude: envelope[e] };
-    const candidates = localMaxima(envelope, from, to)
+            : { index: parabolicInterp(searched, e), amplitude: searched[e] };
+    const candidates = localMaxima(searched, from, to)
         .slice(0, MAX_CANDIDATES)
         .map((i) => ({
-            index: parabolicInterp(envelope, i),
-            amplitude: envelope[i],
-            prominence: prominence(envelope, i),
+            index: parabolicInterp(searched, i),
+            amplitude: searched[i],
+            prominence: prominence(searched, i),
         }));
 
     return {
@@ -336,7 +355,97 @@ export function analyzePing(
         candidates,
         noiseFloor: median(envelope),
         envelope,
+        searched,
     };
+}
+
+/**
+ * Envelope power relative to the direct peak at index d, for lags
+ * 0..length-1 after it (0 past the end of the envelope).
+ */
+export function directProfile(
+    envelope: Float32Array,
+    d: number,
+    length: number
+): Float32Array {
+    const out = new Float32Array(length);
+    const a = envelope[d];
+    for (let j = 0; j < length && d + j < envelope.length; j++) {
+        out[j] = (envelope[d + j] / a) ** 2;
+    }
+    return out;
+}
+
+/**
+ * Background power from calibration profiles (see directProfile): their mean,
+ * widened by ±widen lags so that small misalignments leave no residue. It ends
+ * where its local average drops below minAboveNoise × noisePower, so that only
+ * the device's own tail is removed, not objects further out in the
+ * calibration scene. Lags before `start` are never used.
+ */
+export function makeBackground(
+    profiles: Float32Array[],
+    noisePower: number,
+    start: number,
+    { widen = 2, smooth = 8, minAboveNoise = 4 } = {}
+): Float32Array {
+    const length = Math.min(...profiles.map((p) => p.length));
+    const mean = new Float64Array(length);
+    for (const p of profiles) {
+        for (let j = 0; j < length; j++) {
+            mean[j] += p[j] / profiles.length;
+        }
+    }
+    let end = start;
+    for (; end < length; end++) {
+        let sum = 0;
+        let n = 0;
+        for (
+            let k = Math.max(0, end - smooth);
+            k <= Math.min(length - 1, end + smooth);
+            k++
+        ) {
+            sum += mean[k];
+            n++;
+        }
+        if (sum / n < minAboveNoise * noisePower) {
+            break;
+        }
+    }
+    const out = new Float32Array(end);
+    for (let j = 0; j < end; j++) {
+        let m = 0;
+        for (
+            let k = Math.max(0, j - widen);
+            k <= Math.min(length - 1, j + widen);
+            k++
+        ) {
+            m = Math.max(m, mean[k]);
+        }
+        out[j] = m;
+    }
+    return out;
+}
+
+/**
+ * A copy of the envelope with margin × background power removed from lags
+ * `start` onwards after the direct peak at d. What would go negative is 0.
+ */
+export function removeBackground(
+    envelope: Float32Array,
+    d: number,
+    start: number,
+    bg: Background
+): Float32Array {
+    const out = envelope.slice();
+    const a2 = envelope[d] ** 2;
+    for (let j = start; j < bg.power.length && d + j < out.length; j++) {
+        const v = envelope[d + j];
+        out[d + j] = Math.sqrt(
+            Math.max(0, v * v - bg.margin * bg.power[j] * a2)
+        );
+    }
+    return out;
 }
 
 /**

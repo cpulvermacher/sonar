@@ -6,7 +6,9 @@ import {
     type AnalysisParams,
     analyzePing,
     delaySigma,
+    directProfile,
     highpassBiquad,
+    makeBackground,
     nextPow2,
     peakSnr,
     rmsBandwidth,
@@ -25,8 +27,17 @@ interface Job {
     /** RMS bandwidth of the chirp in Hz, for the delay uncertainty. */
     bandwidth: number;
     params: AnalysisParams;
+    /** Power ratio for Background.margin. */
+    backgroundMargin: number;
     /** Samples analysed per ping, starting at emitFrame. */
     windowLength: number;
+}
+
+interface Calibration {
+    left: number;
+    profiles: Float32Array[];
+    /** Sum of the per-ping noise power relative to the direct peak. */
+    noisePower: number;
 }
 
 interface PendingPing {
@@ -42,6 +53,8 @@ let framesReceived = 0;
 let lastStats = 0;
 let job: Job | null = null;
 let pending: PendingPing[] = [];
+let background: Float32Array | null = null;
+let calibration: Calibration | null = null;
 
 function post(msg: FromWorker, transfer: Transferable[] = []) {
     self.postMessage(msg, { transfer });
@@ -70,6 +83,8 @@ function makeJob(config: SonarConfig, chirp: Float32Array): Job {
             // Envelope amplitudes, so dB / 20.
             minProminence: 10 ** (config.minEchoProminenceDb / 20),
         },
+        // Powers, so dB / 10.
+        backgroundMargin: 10 ** (config.backgroundMarginDb / 10),
     };
 }
 
@@ -128,11 +143,21 @@ function analyse(job: Job, ping: PendingPing) {
     for (let i = 0; i < x.length; i++) {
         x[i] = ring[(ping.emitFrame + i) & mask];
     }
-    const result = analyzePing(x, job.chirp, job.params);
-
-    // Envelope for display: from slightly before the direct path to maxLag
-    // after it, max-pooled so that narrow peaks survive.
+    const result = analyzePing(x, job.chirp, {
+        ...job.params,
+        background: background && {
+            power: background,
+            margin: job.backgroundMargin,
+        },
+    });
     const { maxLag } = job.params;
+    if (calibration) {
+        calibrate(calibration, result, maxLag + 1, job.params.blank);
+    }
+
+    // Envelope for display (with the background removed): from slightly
+    // before the direct path to maxLag after it, max-pooled so that narrow
+    // peaks survive.
     const start = Math.max(0, Math.floor(result.direct.index) - (maxLag >> 4));
     const end = Math.min(
         result.envelope.length,
@@ -147,7 +172,7 @@ function analyse(job: Job, ping: PendingPing) {
             j < Math.min(end, start + (i + 1) * step);
             j++
         ) {
-            m = Math.max(m, result.envelope[j]);
+            m = Math.max(m, result.searched[j]);
         }
         pooled[i] = m;
     }
@@ -183,6 +208,31 @@ function analyse(job: Job, ping: PendingPing) {
     );
 }
 
+function calibrate(
+    cal: Calibration,
+    result: ReturnType<typeof analyzePing>,
+    length: number,
+    start: number
+) {
+    const d = Math.round(result.direct.index);
+    cal.profiles.push(directProfile(result.envelope, d, length));
+    // Mean noise power from the median of a Rayleigh-distributed envelope.
+    cal.noisePower +=
+        (result.noiseFloor / result.direct.amplitude) ** 2 / Math.LN2;
+    cal.left--;
+    if (cal.left > 0) {
+        post({ type: 'calibration', left: cal.left, power: null });
+        return;
+    }
+    calibration = null;
+    background = makeBackground(
+        cal.profiles,
+        cal.noisePower / cal.profiles.length,
+        start
+    );
+    post({ type: 'calibration', left: 0, power: background.slice() });
+}
+
 self.onmessage = (e: MessageEvent<ToWorker>) => {
     const msg = e.data;
     switch (msg.type) {
@@ -201,6 +251,12 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
             break;
         case 'ping':
             pending.push({ pingId: msg.pingId, emitFrame: msg.emitFrame });
+            break;
+        case 'calibrate':
+            calibration = { left: msg.pings, profiles: [], noisePower: 0 };
+            break;
+        case 'background':
+            background = msg.power;
             break;
     }
 };

@@ -28,6 +28,16 @@ export type ToWorker =
           type: 'ping';
           pingId: number;
           emitFrame: number;
+      }
+    | {
+          /** Learn the background from the next `pings` pings. */
+          type: 'calibrate';
+          pings: number;
+      }
+    | {
+          /** Use this background power profile (see dsp.Background), or none. */
+          type: 'background';
+          power: Float32Array | null;
       };
 
 /** Worker -> main. */
@@ -59,4 +69,10 @@ export type FromWorker =
           envStep: number;
           /** The raw mic samples that were analysed, starting at emitFrame. */
           raw: Float32Array;
+      }
+    | {
+          /** Calibration progress; `power` is set (and in use) once `left` is 0. */
+          type: 'calibration';
+          left: number;
+          power: Float32Array | null;
       };
