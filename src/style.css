@@ -108,10 +108,41 @@ button:disabled {
     flex-wrap: wrap;
 }
 
-.controls.background {
+.controls.background,
+.controls.chirp {
     margin-top: 8px;
 }
 
+.controls label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-secondary);
+    font-size: 14px;
+}
+
+select,
+input[type="number"] {
+    font: inherit;
+    color: var(--text-primary);
+    background: var(--surface);
+    border: 0;
+    border-radius: 6px;
+    box-shadow: inset 0 0 0 1px var(--border);
+    padding: 0.35em 0.5em;
+}
+
+input[type="number"] {
+    width: 5em;
+    font-variant-numeric: tabular-nums;
+}
+
+select:disabled,
+input:disabled {
+    opacity: 0.5;
+}
+
+#chirp-range,
 #bg-status,
 #status {
     color: var(--text-muted);

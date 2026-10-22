@@ -4,7 +4,7 @@
 // every 0.25 s. The phone's own clutter produces a spurious "echo" at about
 // 0.17 m that is stronger than the wall.
 import { describe, expect, it } from 'vitest';
-import { BANDS, DEFAULT_CONFIG } from '../config';
+import { chirpBand, DEFAULT_CONFIG } from '../config';
 import {
     type AnalysisParams,
     analyzePing,
@@ -22,7 +22,7 @@ const sweep = decodeRecording(sweepJson);
 // As in the worker's makeJob.
 const config = { ...DEFAULT_CONFIG, ...sweep.config };
 const fs = sweep.sampleRate;
-const band = BANDS[config.band];
+const band = chirpBand(config);
 const c = speedOfSound(config.temperature);
 const metresPerSample = c / fs / 2;
 const params: AnalysisParams = {

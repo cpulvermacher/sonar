@@ -1,7 +1,7 @@
 // DSP worker: buffers mic samples, cuts out the recording for each ping and
 // analyses it (highpass, matched filter, peak picking).
 
-import { BANDS, type SonarConfig } from './config';
+import { chirpBand, type SonarConfig } from './config';
 import {
     type AnalysisParams,
     analyzePing,
@@ -60,7 +60,7 @@ function post(msg: FromWorker, transfer: Transferable[] = []) {
 }
 
 function makeJob(config: SonarConfig, chirp: Float32Array): Job {
-    const band = BANDS[config.band];
+    const band = chirpBand(config);
     const c = speedOfSound(config.temperature);
     const period = Math.round(config.interval * sampleRate);
     const maxLag = Math.ceil(((2 * config.maxRange) / c) * sampleRate);

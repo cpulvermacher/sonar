@@ -13,6 +13,11 @@
                 <button id="save" type="button" class="secondary" disabled>Save recording</button>
                 <span id="status">Stopped</span>
             </div>
+            <div class="controls chirp">
+                <label>Chirp <select id="band"></select></label>
+                <label>Frequency × <input id="freq-scale" type="number" min="0.5" max="4" step="0.1" value="1" inputmode="decimal" /></label>
+                <span id="chirp-range"></span>
+            </div>
             <div class="controls background">
                 <button id="calibrate" type="button" class="secondary" disabled>Calibrate background</button>
                 <button id="clear-bg" type="button" class="secondary" disabled>Clear</button>

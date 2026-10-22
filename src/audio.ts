@@ -2,7 +2,7 @@
 // chirp scheduling.
 
 import workletUrl from './capture.worklet.ts?worker&url';
-import { BANDS, type SonarConfig } from './config';
+import { chirpBand, maxChirpFrequency, type SonarConfig } from './config';
 import { makeChirp } from './dsp';
 import type { FromWorker, ToWorker } from './messages';
 
@@ -133,13 +133,20 @@ export function startPinging(
 ): Float32Array {
     stopPinging(session);
     const { ctx, worker } = session;
-    const band = BANDS[config.band];
+    const band = chirpBand(config);
+    const limit = maxChirpFrequency(ctx.sampleRate);
+    if (band.f1 > limit) {
+        throw new Error(
+            `The chirp would go up to ${(band.f1 / 1000).toFixed(1)} kHz, but at ${ctx.sampleRate} Hz this device plays up to ${(limit / 1000).toFixed(1)} kHz. Lower the frequency multiplier.`
+        );
+    }
     const samples = makeChirp(
         ctx.sampleRate,
         band.f0,
         band.f1,
         config.chirpDuration,
-        config.amplitude
+        config.amplitude,
+        band.taper
     );
     const buffer = ctx.createBuffer(1, samples.length, ctx.sampleRate);
     buffer.getChannelData(0).set(samples);

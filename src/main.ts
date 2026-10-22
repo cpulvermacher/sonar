@@ -4,7 +4,13 @@ import {
     openAudio,
     startPinging,
 } from './audio';
-import { DEFAULT_CONFIG } from './config';
+import {
+    BANDS,
+    type BandId,
+    chirpBand,
+    DEFAULT_CONFIG,
+    type SonarConfig,
+} from './config';
 import { type Background, backgroundPower, speedOfSound } from './dsp';
 import { DistanceEstimator } from './estimate';
 import type { FromWorker, ToWorker } from './messages';
@@ -30,6 +36,9 @@ const saveButton = el<HTMLButtonElement>('save');
 const calibrateButton = el<HTMLButtonElement>('calibrate');
 const clearBgButton = el<HTMLButtonElement>('clear-bg');
 const bgStatus = el<HTMLElement>('bg-status');
+const bandSelect = el<HTMLSelectElement>('band');
+const scaleInput = el<HTMLInputElement>('freq-scale');
+const chirpRange = el<HTMLElement>('chirp-range');
 const status = el<HTMLElement>('status');
 const errorBox = el<HTMLElement>('error');
 el('version').textContent =
@@ -38,7 +47,8 @@ el('version').textContent =
 /** Power ratio to dB. */
 const toDb = (ratio: number) => 10 * Math.log10(ratio);
 
-const config = DEFAULT_CONFIG;
+// The chirp settings are applied on Start.
+let config: SonarConfig = DEFAULT_CONFIG;
 const estimator = new DistanceEstimator({
     window: config.averagePings,
     minSnrDb: config.minEchoSnrDb,
@@ -75,6 +85,61 @@ let calibrationLeft: number | null = null;
 function post(msg: ToWorker) {
     session?.worker.postMessage(msg);
 }
+
+/** Remembered in this browser, as a convenience. */
+const CHIRP_KEY = 'sonar.chirp.v1';
+
+for (const [id, band] of Object.entries(BANDS)) {
+    bandSelect.add(new Option(band.label, id));
+}
+try {
+    const saved = JSON.parse(localStorage.getItem(CHIRP_KEY) ?? 'null');
+    if (saved && saved.band in BANDS) {
+        bandSelect.value = saved.band;
+        scaleInput.value = String(saved.frequencyScale);
+    }
+} catch {
+    // Defaults stay.
+}
+
+/** The chirp settings from the controls, or null if the multiplier is invalid. */
+function chirpSettings(): Pick<SonarConfig, 'band' | 'frequencyScale'> | null {
+    const frequencyScale = scaleInput.valueAsNumber;
+    if (!(frequencyScale > 0)) {
+        return null;
+    }
+    return { band: bandSelect.value as BandId, frequencyScale };
+}
+
+function renderChirp() {
+    const running = session !== null;
+    bandSelect.disabled = running;
+    scaleInput.disabled = running;
+    const settings = chirpSettings();
+    if (!settings) {
+        chirpRange.textContent = 'Enter a multiplier above 0.';
+        return;
+    }
+    const band = chirpBand({ ...config, ...settings });
+    const kHz = (f: number) => (f / 1000).toFixed(1);
+    chirpRange.textContent = `Sweeps ${kHz(band.f0)}–${kHz(band.f1)} kHz${running ? '' : ', applied on Start'}.`;
+}
+
+for (const input of [bandSelect, scaleInput]) {
+    input.addEventListener('input', () => {
+        renderChirp();
+        const settings = chirpSettings();
+        if (!settings) {
+            return;
+        }
+        try {
+            localStorage.setItem(CHIRP_KEY, JSON.stringify(settings));
+        } catch {
+            // Not remembered.
+        }
+    });
+}
+renderChirp();
 
 /** Drops the background, in the worker and the view. */
 function clearBackground() {
@@ -188,9 +253,16 @@ button.addEventListener('click', async () => {
             status.textContent = 'Stopped';
             setRunning(false);
             renderBackground();
+            renderChirp();
         } else {
+            const settings = chirpSettings();
+            if (!settings) {
+                throw new Error('Enter a frequency multiplier above 0.');
+            }
+            config = { ...DEFAULT_CONFIG, ...settings };
             status.textContent = 'Starting…';
             session = await openAudio(onWorkerMessage);
+            renderChirp();
             pingCount = 0;
             estimator.reset();
             view.reset();
@@ -205,9 +277,14 @@ button.addEventListener('click', async () => {
             setRunning(true);
         }
     } catch (err) {
+        // E.g. a chirp too high for the sample rate, after audio was opened.
+        if (session) {
+            await closeAudio(session).catch(() => {});
+        }
         session = null;
         calibrationLeft = null;
         renderBackground();
+        renderChirp();
         setRunning(false);
         status.textContent = 'Stopped';
         errorBox.textContent = err instanceof Error ? err.message : String(err);
