@@ -4,8 +4,8 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>Sonar</title>
-      <script type="module" crossorigin src="./assets/index-D5pmN5Iq.js"></script>
-      <link rel="stylesheet" crossorigin href="./assets/index-DVI4oc3M.css">
+      <script type="module" crossorigin src="./assets/index-CTNlDP1k.js"></script>
+      <link rel="stylesheet" crossorigin href="./assets/index-CfLQg2dU.css">
     </head>
     <body>
         <main>
@@ -15,15 +15,12 @@
                 <button id="save" type="button" class="secondary" disabled>Save recording</button>
                 <span id="status">Stopped</span>
             </div>
-            <div class="controls chirp">
+            <div class="controls settings">
                 <label>Chirp <select id="band"></select></label>
                 <label>Frequency × <input id="freq-scale" type="number" min="0.5" max="4" step="0.1" value="1" inputmode="decimal" /></label>
+                <label>Pings per second <select id="rate"></select></label>
+                <label title="Half the distance between the phone's speaker and its microphone; added to every measurement">Offset (cm) <input id="offset" type="number" min="0" max="20" step="0.5" inputmode="decimal" /></label>
                 <span id="chirp-range"></span>
-            </div>
-            <div class="controls background">
-                <button id="calibrate" type="button" class="secondary" disabled>Calibrate background</button>
-                <button id="clear-bg" type="button" class="secondary" disabled>Clear</button>
-                <span id="bg-status" aria-live="polite"></span>
             </div>
             <p id="error" role="alert"></p>
 
@@ -38,13 +35,12 @@
 
             <section class="panel chart">
                 <h2>Latest ping</h2>
-                <p class="subtitle">Matched-filter envelope in dB relative to the direct path, by distance, with the calibrated background removed</p>
+                <p class="subtitle">Matched-filter power in dB relative to the direct path, by distance. The threshold follows the phone's own response, which is learned while running.</p>
                 <div class="legend">
-                    <span><span class="key" style="background: var(--series-1)"></span>Correlation</span>
+                    <span><span class="key" style="background: var(--series-1)"></span>Echo power</span>
+                    <span><span class="key dashed"></span>Threshold</span>
                     <span><span class="key band" style="background: var(--series-2)"></span>Estimate ± σ</span>
-                    <span><span class="key stem"></span>Peak prominence (thick: enough)</span>
-                    <span><span class="key dashed"></span>Min SNR</span>
-                    <span><span class="key band removed"></span>Removed background</span>
+                    <span><span class="key band blind"></span>Too close</span>
                 </div>
                 <div class="plot">
                     <canvas id="ascan"></canvas>
@@ -56,12 +52,25 @@
                 <h2>Echogram</h2>
                 <p class="subtitle">One column per ping, newest on the right</p>
                 <div class="legend">
-                    <span>−50 dB<span class="scale" id="scale"></span>0 dB</span>
+                    <span>−60 dB<span class="scale" id="scale"></span>0 dB</span>
                     <span><span class="key" style="background: var(--series-2)"></span>Estimate</span>
                 </div>
                 <div class="plot">
                     <canvas id="echogram"></canvas>
                     <div class="tooltip" id="echogram-tip" hidden></div>
+                </div>
+            </section>
+
+            <section class="panel chart" id="map-panel" hidden>
+                <h2>Map</h2>
+                <p class="subtitle">Seen from above, the phone in the centre and its top edge pointing up: the last distance measured in each direction. Hold the phone flat and turn on the spot. The sonar hears in all directions, so each point is the nearest strong reflector, not necessarily what the phone points at.</p>
+                <div class="legend">
+                    <span><span class="key" style="background: var(--series-1)"></span>Measured</span>
+                    <span><span class="key" style="background: var(--series-2)"></span>Now</span>
+                    <button id="clear-map" type="button" class="secondary small">Clear map</button>
+                </div>
+                <div class="plot">
+                    <canvas id="map"></canvas>
                 </div>
             </section>
 
@@ -72,10 +81,10 @@
                         <thead>
                             <tr>
                                 <th scope="col">Ping</th>
-                                <th scope="col">Distance (m)</th>
-                                <th scope="col">σ (mm)</th>
-                                <th scope="col">Echo SNR (dB)</th>
-                                <th scope="col">Direct shift (mm)</th>
+                                <th scope="col">Echo (m)</th>
+                                <th scope="col">Level (dB)</th>
+                                <th scope="col">Estimate (m)</th>
+                                <th scope="col">Latency (ms)</th>
                             </tr>
                         </thead>
                         <tbody id="pings"></tbody>
