@@ -81,7 +81,6 @@ const view = new SonarView(viewOptions(config, 48000), {
     echogram: el('echogram'),
     echogramTip: el('echogram-tip'),
     map: el('map'),
-    table: el('pings'),
 });
 
 let session: AudioSession | null = null;

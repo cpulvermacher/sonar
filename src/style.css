@@ -108,8 +108,14 @@ button:disabled {
     flex-wrap: wrap;
 }
 
-.controls.settings {
-    margin-top: 8px;
+/* Start/Stop stays in reach while the page scrolls. */
+.controls.main {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    margin: 0 -16px;
+    padding: 8px 16px;
+    background: var(--page);
 }
 
 button.small {
@@ -238,6 +244,12 @@ input:disabled {
     border-radius: 2px;
 }
 
+.legend .point {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+}
+
 .legend .blind {
     background: var(--text-muted);
     opacity: 0.25;
@@ -298,31 +310,4 @@ input:disabled {
     color: var(--text-muted);
     font-size: 12px;
     font-variant-numeric: tabular-nums;
-}
-
-/* Table view */
-
-details summary {
-    cursor: pointer;
-    color: var(--text-secondary);
-}
-
-table {
-    border-collapse: collapse;
-    width: 100%;
-    margin-top: 8px;
-    font-size: 13px;
-    font-variant-numeric: tabular-nums;
-}
-
-th,
-td {
-    text-align: right;
-    padding: 4px 8px;
-    border-bottom: 1px solid var(--grid);
-}
-
-th {
-    color: var(--text-secondary);
-    font-weight: 600;
 }
