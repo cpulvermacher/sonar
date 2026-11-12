@@ -1,46 +1,49 @@
-// Rendering: distance readout, A-scan of the latest ping, echogram history
-// and a table of recent pings. Plain Canvas 2D, colours from CSS tokens.
+// Rendering: distance readout, A-scan of the latest ping, echogram history,
+// a map by compass direction and a table of recent pings. Plain Canvas 2D,
+// colours from CSS tokens.
 
-import { median, type PeakCandidate } from './dsp';
-import type { Estimate } from './estimate';
+import type { Estimate } from './tracker';
 
 export interface PingView {
     pingId: number;
-    /** Max-pooled correlation envelope; envelope[i] covers samples from envStart + i·envStep. */
-    envelope: Float32Array;
-    envStart: number;
-    envStep: number;
-    /** Median of the full (unpooled) envelope, the SNR reference. */
-    noiseFloor: number;
-    /** Peak positions in samples, on the same axis as envStart. */
-    direct: number;
-    echo: number | null;
-    /** Strongest local maxima considered for the echo. */
-    candidates: PeakCandidate[];
-    /** Converts a round-trip delay in samples to one-way distance in m. */
-    metresPerSample: number;
-    /** This ping's distance (m) and its model σ, if an echo was found. */
+    /** False if the ping could not be analysed (no direct path found). */
+    valid: boolean;
+    /** Smoothed power relative to the direct path; power[l] is at lag l + lagOffset. */
+    power: Float32Array;
+    /** Power an echo needs at each lag (empty if not valid). */
+    threshold: Float32Array;
+    lagOffset: number;
+    /** This ping's distance (m) and echo level (dB re direct), if an echo was found. */
     distance: number | null;
-    sigma: number;
-    echoSnrDb: number | null;
-    latencyMs: number;
+    levelDb: number | null;
+    latencyMs: number | null;
     estimate: Estimate | null;
+    /** Direction the phone points in, degrees clockwise, if known. */
+    heading: number | null;
 }
 
 export interface ViewOptions {
+    /** Converts a round-trip delay in samples to one-way distance in m. */
+    metresPerSample: number;
+    /** Distance (m) at lag 0, see SonarConfig.rangeOffset. */
+    rangeOffset: number;
+    /** No echoes are searched for below this distance (m). */
     minRange: number;
     maxRange: number;
+    /** Time between pings in s. */
     interval: number;
-    minEchoSnrDb: number;
-    minEchoProminenceDb: number;
 }
 
 /** Lowest level shown, in dB relative to the direct path. */
-const DB_FLOOR = -50;
+const DB_FLOOR = -60;
 /** Pings kept in the echogram, and distance rows per ping. */
 const HISTORY = 240;
 const ROWS = 200;
 const TABLE_ROWS = 10;
+/** Width of a direction bin of the map, in degrees. */
+const MAP_BIN = 3;
+/** Map points fade out over this long (ms). */
+const MAP_FADE_MS = 60000;
 const MARGIN = { left: 48, right: 12, top: 20, bottom: 28 };
 const FONT = '12px system-ui, -apple-system, "Segoe UI", sans-serif';
 
@@ -61,6 +64,12 @@ interface Column {
     /** dB per distance row (row 0 = nearest), NaN where there is no data. */
     rows: Float32Array;
     estimate: number | null;
+}
+
+interface MapPoint {
+    distance: number;
+    /** performance.now() of the last measurement in this direction. */
+    time: number;
 }
 
 interface Hover {
@@ -126,21 +135,24 @@ export function niceTicks(min: number, max: number, target = 5): number[] {
     return ticks;
 }
 
-function toDb(value: number, reference: number): number {
-    return 20 * Math.log10(Math.max(value, 1e-12) / reference);
+/** Power ratio to dB. */
+function toDb(power: number): number {
+    return 10 * Math.log10(Math.max(power, 1e-12));
 }
 
 /** A canvas sized to its CSS box at device pixel ratio, drawn in CSS px. */
 class Surface {
     readonly ctx: CanvasRenderingContext2D;
+    readonly canvas: HTMLCanvasElement;
     width = 0;
     height = 0;
 
-    constructor(readonly canvas: HTMLCanvasElement) {
+    constructor(canvas: HTMLCanvasElement) {
         const ctx = canvas.getContext('2d');
         if (!ctx) {
             throw new Error('Canvas 2D not supported');
         }
+        this.canvas = canvas;
         this.ctx = ctx;
     }
 
@@ -171,41 +183,49 @@ class Surface {
     }
 }
 
+export interface ViewElements {
+    distance: HTMLElement;
+    sigma: HTMLElement;
+    details: HTMLElement;
+    ascan: HTMLCanvasElement;
+    ascanTip: HTMLElement;
+    echogram: HTMLCanvasElement;
+    echogramTip: HTMLElement;
+    map: HTMLCanvasElement;
+    table: HTMLTableSectionElement;
+}
+
 export class SonarView {
     private theme = readTheme();
+    private options: ViewOptions;
+    private readonly el: ViewElements;
     private latest: PingView | null = null;
-    /** Background power relative to the direct path, per sample of lag. */
-    private background: Float32Array | null = null;
     private columns: Column[] = [];
     private recent: PingView[] = [];
+    /** Last distance per direction bin. */
+    private mapPoints = new Map<number, MapPoint>();
     private ascan: Surface;
     private echogram: Surface;
+    private map: Surface;
     private image = document.createElement('canvas');
     private ascanHover: Hover | null = null;
     private echogramHover: Hover | null = null;
     private dirty = true;
+    private textDirty = true;
 
-    constructor(
-        private readonly options: ViewOptions,
-        private readonly el: {
-            distance: HTMLElement;
-            sigma: HTMLElement;
-            details: HTMLElement;
-            ascan: HTMLCanvasElement;
-            ascanTip: HTMLElement;
-            echogram: HTMLCanvasElement;
-            echogramTip: HTMLElement;
-            table: HTMLTableSectionElement;
-        }
-    ) {
+    constructor(options: ViewOptions, el: ViewElements) {
+        this.options = options;
+        this.el = el;
         this.ascan = new Surface(el.ascan);
         this.echogram = new Surface(el.echogram);
+        this.map = new Surface(el.map);
         this.image.width = HISTORY;
         this.image.height = ROWS;
 
         const observer = new ResizeObserver(() => this.invalidate());
         observer.observe(el.ascan);
         observer.observe(el.echogram);
+        observer.observe(el.map);
         window
             .matchMedia('(prefers-color-scheme: dark)')
             .addEventListener('change', () => {
@@ -220,7 +240,14 @@ export class SonarView {
             this.echogramHover = h;
         });
 
+        // Text and canvases are redrawn at most once per frame, however
+        // fast the pings come in.
         const frame = () => {
+            if (this.textDirty) {
+                this.textDirty = false;
+                this.renderReadout();
+                this.renderTable();
+            }
             if (this.dirty) {
                 this.dirty = false;
                 this.draw();
@@ -230,12 +257,19 @@ export class SonarView {
         requestAnimationFrame(frame);
     }
 
-    reset(): void {
+    /** Clears everything, for a new session with these options. */
+    reset(options: ViewOptions): void {
+        this.options = options;
         this.latest = null;
         this.columns = [];
         this.recent = [];
-        this.renderReadout();
-        this.renderTable();
+        this.mapPoints.clear();
+        this.textDirty = true;
+        this.invalidate();
+    }
+
+    clearMap(): void {
+        this.mapPoints.clear();
         this.invalidate();
     }
 
@@ -247,13 +281,17 @@ export class SonarView {
         }
         this.recent.unshift(ping);
         this.recent.length = Math.min(this.recent.length, TABLE_ROWS);
-        this.renderReadout();
-        this.renderTable();
-        this.invalidate();
-    }
-
-    setBackground(power: Float32Array | null): void {
-        this.background = power;
+        if (ping.estimate && ping.heading !== null) {
+            const bin =
+                ((Math.round(ping.heading / MAP_BIN) % (360 / MAP_BIN)) +
+                    360 / MAP_BIN) %
+                (360 / MAP_BIN);
+            this.mapPoints.set(bin, {
+                distance: ping.estimate.distance,
+                time: performance.now(),
+            });
+        }
+        this.textDirty = true;
         this.invalidate();
     }
 
@@ -279,65 +317,40 @@ export class SonarView {
         });
     }
 
-    /** Envelope sample index (into ping.envelope) for a distance in m. */
-    private envIndex(ping: PingView, distance: number): number {
-        const sample = ping.direct + distance / ping.metresPerSample;
-        return (sample - ping.envStart) / ping.envStep;
+    /** Distance in m of power[l] of this ping. */
+    private lagDistance(ping: PingView, l: number): number {
+        const { metresPerSample, rangeOffset } = this.options;
+        return (l + ping.lagOffset) * metresPerSample + rangeOffset;
     }
 
-    /** Distance in m of a peak at sample position `index`. */
-    private peakDistance(ping: PingView, index: number): number {
-        return (index - ping.direct) * ping.metresPerSample;
-    }
-
-    private envDistance(ping: PingView, i: number): number {
-        const sample = ping.envStart + (i + 0.5) * ping.envStep;
-        return (sample - ping.direct) * ping.metresPerSample;
-    }
-
-    private reference(ping: PingView): number {
-        return ping.envelope.reduce((m, v) => Math.max(m, v), 1e-12);
-    }
-
-    /** Envelope amplitude at which an echo reaches the SNR threshold (inverse of peakSnr). */
-    private snrThreshold(ping: PingView): number {
-        const snr = 10 ** (this.options.minEchoSnrDb / 10);
-        return ping.noiseFloor * Math.sqrt(snr / Math.LN2);
-    }
-
-    /**
-     * How far each recent ping's direct path lies from their median, in m of
-     * distance; a shifted reference shifts the measured distance by as much.
-     */
-    private directShifts(): number[] {
-        const directs = this.recent.map((p) => p.direct);
-        const mid = median(directs);
-        return this.recent.map((p) => (p.direct - mid) * p.metresPerSample);
+    /** Index into ping.power (fractional) for a distance in m. */
+    private lagIndex(ping: PingView, distance: number): number {
+        const { metresPerSample, rangeOffset } = this.options;
+        return (distance - rangeOffset) / metresPerSample - ping.lagOffset;
     }
 
     private makeColumn(ping: PingView): Column {
         const rows = new Float32Array(ROWS).fill(Number.NaN);
-        const ref = this.reference(ping);
-        const rowSize = this.options.maxRange / ROWS;
-        for (let r = 0; r < ROWS; r++) {
-            const from = Math.max(
-                0,
-                Math.floor(this.envIndex(ping, r * rowSize))
-            );
-            const to = Math.min(
-                ping.envelope.length,
-                Math.ceil(this.envIndex(ping, (r + 1) * rowSize))
-            );
-            let max = 0;
-            for (
-                let i = from;
-                i < Math.max(to, from + 1) && i < ping.envelope.length;
-                i++
-            ) {
-                max = Math.max(max, ping.envelope[i]);
-            }
-            if (from < ping.envelope.length) {
-                rows[r] = toDb(max, ref);
+        if (ping.valid) {
+            const rowSize = this.options.maxRange / ROWS;
+            for (let r = 0; r < ROWS; r++) {
+                const end = this.lagIndex(ping, (r + 1) * rowSize);
+                if (end < 0) {
+                    continue; // closer than the direct path
+                }
+                const from = Math.max(
+                    0,
+                    Math.floor(this.lagIndex(ping, r * rowSize))
+                );
+                const to = Math.min(
+                    ping.power.length,
+                    Math.max(from + 1, Math.ceil(end))
+                );
+                let max = Number.NaN;
+                for (let i = from; i < to; i++) {
+                    max = max > ping.power[i] ? max : ping.power[i];
+                }
+                rows[r] = toDb(max);
             }
         }
         return {
@@ -363,40 +376,41 @@ export class SonarView {
             el.distance.textContent = 'No echo';
             el.sigma.textContent = '';
         } else {
-            el.distance.textContent = `${est.distance.toFixed(3)} m`;
-            el.sigma.textContent = `± ${mm(est.sigma)}`;
+            el.distance.textContent = `${est.distance.toFixed(2)} m`;
+            el.sigma.textContent = `± ${cm(est.sigma)}`;
         }
         const parts: string[] = [];
         if (est) {
             parts.push(
-                `scatter ${mm(est.sigmaStat)}`,
-                `SNR model ${mm(est.sigmaModel)}`,
-                `sound speed ${mm(est.sigmaSound)}`,
-                `${est.accepted} of ${est.window} pings`
+                `scatter ${cm(est.sigmaStat)}`,
+                `sound speed ${cm(est.sigmaSound)}`
             );
         }
-        parts.push(
-            ping.echoSnrDb === null
-                ? 'no echo this ping'
-                : `echo SNR ${ping.echoSnrDb.toFixed(1)} dB`,
-            `latency ${ping.latencyMs.toFixed(1)} ms`
-        );
-        if (this.recent.length >= 2) {
-            parts.push(`direct path jitter ${mm(rms(this.directShifts()))}`);
+        if (!ping.valid) {
+            parts.push('ping not heard');
+        } else if (ping.levelDb === null) {
+            parts.push('no echo this ping');
+        } else {
+            parts.push(`echo ${ping.levelDb.toFixed(1)} dB`);
+        }
+        if (ping.latencyMs !== null) {
+            parts.push(`audio latency ${ping.latencyMs.toFixed(0)} ms`);
+        }
+        if (ping.heading !== null) {
+            parts.push(`heading ${ping.heading.toFixed(0)}°`);
         }
         el.details.textContent = parts.join(' · ');
     }
 
     private renderTable(): void {
-        const shifts = this.directShifts();
-        const rows = this.recent.map((p, k) => {
+        const rows = this.recent.map((p) => {
             const tr = document.createElement('tr');
             const cells = [
                 String(p.pingId),
                 p.distance === null ? '—' : p.distance.toFixed(3),
-                p.distance === null ? '—' : (p.sigma * 1000).toFixed(2),
-                p.echoSnrDb === null ? '—' : p.echoSnrDb.toFixed(1),
-                (shifts[k] * 1000).toFixed(1),
+                p.levelDb === null ? '—' : p.levelDb.toFixed(1),
+                p.estimate ? p.estimate.distance.toFixed(3) : '—',
+                p.latencyMs === null ? '—' : p.latencyMs.toFixed(2),
             ];
             for (const text of cells) {
                 const td = document.createElement('td');
@@ -413,6 +427,7 @@ export class SonarView {
     private draw(): void {
         this.drawAscan();
         this.drawEchogram();
+        this.drawMap();
     }
 
     private drawAxes(
@@ -463,6 +478,28 @@ export class SonarView {
         }
     }
 
+    /** Traces values[l] (a power per lag) of the ping as a path, in dB over distance. */
+    private tracePower(
+        ctx: CanvasRenderingContext2D,
+        ping: PingView,
+        values: Float32Array,
+        xScale: (d: number) => number,
+        yScale: (db: number) => number,
+        from = 0
+    ): void {
+        ctx.beginPath();
+        for (let l = from; l < values.length; l++) {
+            const x = xScale(this.lagDistance(ping, l));
+            const y = yScale(Math.max(DB_FLOOR - 1, toDb(values[l])));
+            if (l === from) {
+                ctx.moveTo(x, y);
+            } else {
+                ctx.lineTo(x, y);
+            }
+        }
+        ctx.stroke();
+    }
+
     private drawAscan(): void {
         const s = this.ascan;
         const t = this.theme;
@@ -470,14 +507,11 @@ export class SonarView {
         const { ctx } = s;
         const p = s.plot;
         const ping = this.latest;
-        const { minRange, maxRange } = this.options;
+        const { minRange, maxRange, rangeOffset, metresPerSample } =
+            this.options;
 
-        const xMin = ping
-            ? Math.min(0, this.envDistance(ping, 0))
-            : -maxRange / 16;
-        const xScale = (d: number) =>
-            p.x + ((d - xMin) / (maxRange - xMin)) * p.w;
-        const yScale = (db: number) => p.y + (-db / -DB_FLOOR) * p.h;
+        const xScale = (d: number) => p.x + (d / maxRange) * p.w;
+        const yScale = (db: number) => p.y + (db / DB_FLOOR) * p.h;
         const xTicks = niceTicks(
             0,
             maxRange,
@@ -499,36 +533,13 @@ export class SonarView {
         ctx.rect(p.x, p.y, p.w, p.h);
         ctx.clip();
 
-        // Blanked region next to the direct path.
+        // Too close to tell an echo from the phone's own response.
         ctx.fillStyle = t.textMuted;
         ctx.globalAlpha = 0.1;
-        ctx.fillRect(xScale(0), p.y, xScale(minRange) - xScale(0), p.h);
+        ctx.fillRect(p.x, p.y, xScale(minRange) - p.x, p.h);
         ctx.globalAlpha = 1;
 
-        if (ping && this.background) {
-            // The level of what is subtracted (coherently, so echoes below
-            // it can still show).
-            const bg = this.background;
-            const start = Math.ceil(minRange / ping.metresPerSample);
-            ctx.fillStyle = t.textMuted;
-            ctx.globalAlpha = 0.25;
-            ctx.beginPath();
-            ctx.moveTo(xScale(start * ping.metresPerSample), p.y + p.h);
-            for (let j = start; j < bg.length; j++) {
-                const db = 10 * Math.log10(Math.max(bg[j], 1e-12));
-                ctx.lineTo(
-                    xScale(j * ping.metresPerSample),
-                    yScale(Math.max(DB_FLOOR, Math.min(0, db)))
-                );
-            }
-            ctx.lineTo(xScale(bg.length * ping.metresPerSample), p.y + p.h);
-            ctx.closePath();
-            ctx.fill();
-            ctx.globalAlpha = 1;
-        }
-
-        if (ping) {
-            const ref = this.reference(ping);
+        if (ping?.valid) {
             const est = ping.estimate;
             if (est) {
                 const x0 = xScale(est.distance - est.sigma);
@@ -540,130 +551,74 @@ export class SonarView {
                 ctx.fillRect(xScale(est.distance) - 1, p.y, 2, p.h);
             }
 
-            // Echoes below this line are too weak to count for the estimate.
-            const yMin = Math.round(yScale(toDb(this.snrThreshold(ping), ref)));
+            // What an echo has to exceed, from where echoes are searched.
             ctx.strokeStyle = t.textMuted;
             ctx.lineWidth = 1;
             ctx.setLineDash([4, 4]);
-            ctx.beginPath();
-            ctx.moveTo(p.x, yMin + 0.5);
-            ctx.lineTo(p.x + p.w, yMin + 0.5);
-            ctx.stroke();
+            this.tracePower(
+                ctx,
+                ping,
+                ping.threshold,
+                xScale,
+                yScale,
+                Math.ceil((minRange - rangeOffset) / metresPerSample)
+            );
             ctx.setLineDash([]);
-            ctx.fillStyle = t.textMuted;
-            ctx.textAlign = 'right';
-            ctx.textBaseline = 'bottom';
-            ctx.fillText('min SNR', p.x + p.w - 4, yMin - 2);
 
             ctx.strokeStyle = t.series1;
             ctx.lineWidth = 2;
             ctx.lineJoin = 'round';
             ctx.lineCap = 'round';
-            ctx.beginPath();
-            for (let i = 0; i < ping.envelope.length; i++) {
-                const x = xScale(this.envDistance(ping, i));
-                const y = yScale(
-                    Math.max(DB_FLOOR - 1, toDb(ping.envelope[i], ref))
-                );
-                if (i === 0) {
-                    ctx.moveTo(x, y);
-                } else {
-                    ctx.lineTo(x, y);
-                }
-            }
-            ctx.stroke();
+            this.tracePower(ctx, ping, ping.power, xScale, yScale);
 
-            // Echo candidates: a stem from each peak down to the trough its
-            // prominence is measured against. Prominent enough = darker, thicker.
-            for (const c of ping.candidates) {
-                const x =
-                    Math.round(xScale(this.peakDistance(ping, c.index))) + 0.5;
-                const top = yScale(toDb(c.amplitude, ref));
-                const base = yScale(
-                    Math.max(DB_FLOOR, toDb(c.amplitude / c.prominence, ref))
+            if (ping.distance !== null && ping.levelDb !== null) {
+                this.dot(
+                    ctx,
+                    xScale(ping.distance),
+                    yScale(Math.max(DB_FLOOR, ping.levelDb)),
+                    t.series1
                 );
-                const passes =
-                    toDb(c.prominence, 1) >= this.options.minEchoProminenceDb;
-                ctx.strokeStyle = passes ? t.textSecondary : t.textMuted;
-                ctx.lineWidth = passes ? 2 : 1;
-                ctx.beginPath();
-                ctx.moveTo(x, top);
-                ctx.lineTo(x, base);
-                ctx.moveTo(x - 4, base);
-                ctx.lineTo(x + 4, base);
-                ctx.stroke();
-            }
-
-            if (ping.echo !== null) {
-                const d = this.peakDistance(ping, ping.echo);
-                const i = Math.round(this.envIndex(ping, d) - 0.5);
-                const db = toDb(
-                    ping.envelope[
-                        Math.max(0, Math.min(i, ping.envelope.length - 1))
-                    ],
-                    ref
-                );
-                this.dot(ctx, xScale(d), yScale(db), t.series1);
             }
         }
         ctx.restore();
 
-        ctx.fillStyle = t.textMuted;
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'bottom';
-        ctx.fillText('direct', xScale(0) + 2, p.y - 4);
-
-        this.ascanTooltip(p, xScale, yScale, xMin);
+        this.ascanTooltip(p, xScale, yScale);
     }
 
     private ascanTooltip(
         p: { x: number; y: number; w: number; h: number },
         xScale: (d: number) => number,
-        yScale: (db: number) => number,
-        xMin: number
+        yScale: (db: number) => number
     ): void {
         const tip = this.el.ascanTip;
         const ping = this.latest;
         const hover = this.ascanHover;
-        if (!ping || !hover || hover.x < p.x || hover.x > p.x + p.w) {
+        if (!ping?.valid || !hover || hover.x < p.x || hover.x > p.x + p.w) {
             tip.hidden = true;
             return;
         }
         const { ctx } = this.ascan;
-        const d =
-            xMin + ((hover.x - p.x) / p.w) * (this.options.maxRange - xMin);
-        const i = Math.round(this.envIndex(ping, d) - 0.5);
-        if (i < 0 || i >= ping.envelope.length) {
+        const d = ((hover.x - p.x) / p.w) * this.options.maxRange;
+        const i = Math.round(this.lagIndex(ping, d));
+        if (i < 0 || i >= ping.power.length) {
             tip.hidden = true;
             return;
         }
-        const db = toDb(ping.envelope[i], this.reference(ping));
-        const x = xScale(this.envDistance(ping, i));
+        const db = toDb(ping.power[i]);
+        const x = xScale(this.lagDistance(ping, i));
+        const y = yScale(Math.max(DB_FLOOR, db));
         ctx.strokeStyle = this.theme.axis;
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(Math.round(x) + 0.5, p.y);
         ctx.lineTo(Math.round(x) + 0.5, p.y + p.h);
         ctx.stroke();
-        this.dot(ctx, x, yScale(Math.max(DB_FLOOR, db)), this.theme.series1);
+        this.dot(ctx, x, y, this.theme.series1);
         const parts = [`${d.toFixed(3)} m`, `${db.toFixed(1)} dB`];
-        const near = ping.candidates.find(
-            (c) =>
-                Math.abs(xScale(this.peakDistance(ping, c.index)) - hover.x) <=
-                6
-        );
-        if (near) {
-            parts.push(
-                `peak prominence ${toDb(near.prominence, 1).toFixed(1)} dB`
-            );
+        if (i < ping.threshold.length) {
+            parts.push(`threshold ${toDb(ping.threshold[i]).toFixed(1)} dB`);
         }
-        this.showTip(
-            tip,
-            this.ascan,
-            x,
-            yScale(Math.max(DB_FLOOR, db)),
-            parts.join(' · ')
-        );
+        this.showTip(tip, this.ascan, x, y, parts.join(' · '));
     }
 
     private drawEchogram(): void {
@@ -743,7 +698,9 @@ export class SonarView {
                 if (drawing) {
                     ctx.lineTo(x, y);
                 } else {
-                    ctx.moveTo(x, y);
+                    // A lone point still shows, as a dot.
+                    ctx.moveTo(x - 0.01, y);
+                    ctx.lineTo(x, y);
                     drawing = true;
                 }
             }
@@ -804,6 +761,89 @@ export class SonarView {
         this.showTip(tip, this.echogram, hover.x, hover.y, parts.join(' · '));
     }
 
+    /**
+     * Top view with the phone in the centre: the last distance measured in
+     * each direction, the phone's current direction pointing up.
+     */
+    private drawMap(): void {
+        const s = this.map;
+        if (s.canvas.clientWidth === 0) {
+            return; // hidden: no orientation sensor
+        }
+        const t = this.theme;
+        s.begin(t);
+        const { ctx } = s;
+        const { maxRange } = this.options;
+        const cx = s.width / 2;
+        const cy = s.height / 2;
+        const radius = Math.max(1, Math.min(cx, cy) - 16);
+        const heading = this.latest?.heading ?? 0;
+        /** Canvas position of a point in compass direction `deg` at distance d. */
+        const pos = (deg: number, d: number): [number, number] => {
+            const a = ((deg - heading - 90) * Math.PI) / 180;
+            const r = (Math.min(d, maxRange) / maxRange) * radius;
+            return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+        };
+
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = t.grid;
+        ctx.fillStyle = t.textMuted;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'bottom';
+        for (const d of niceTicks(0, maxRange, 4)) {
+            if (d === 0) {
+                continue;
+            }
+            ctx.beginPath();
+            ctx.arc(cx, cy, (d / maxRange) * radius, 0, 2 * Math.PI);
+            ctx.stroke();
+            ctx.fillText(`${d} m`, cx + 4, cy - (d / maxRange) * radius - 2);
+        }
+
+        // The direction the phone points in.
+        ctx.strokeStyle = t.axis;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx, cy - radius);
+        ctx.stroke();
+
+        const now = performance.now();
+        const bins = 360 / MAP_BIN;
+        ctx.strokeStyle = t.series1;
+        ctx.fillStyle = t.series1;
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+        for (const [bin, point] of this.mapPoints) {
+            const age = (now - point.time) / MAP_FADE_MS;
+            if (age >= 1) {
+                this.mapPoints.delete(bin);
+                continue;
+            }
+            ctx.globalAlpha = 1 - 0.8 * age;
+            const [x, y] = pos(bin * MAP_BIN, point.distance);
+            const next = this.mapPoints.get((bin + 1) % bins);
+            // Neighbouring directions at a similar distance: one surface.
+            if (next && Math.abs(next.distance - point.distance) < 0.15) {
+                const [nx, ny] = pos((bin + 1) * MAP_BIN, next.distance);
+                ctx.beginPath();
+                ctx.moveTo(x, y);
+                ctx.lineTo(nx, ny);
+                ctx.stroke();
+            }
+            ctx.beginPath();
+            ctx.arc(x, y, 2.5, 0, 2 * Math.PI);
+            ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+
+        const est = this.latest?.estimate;
+        if (est && this.latest?.heading !== null) {
+            const [x, y] = pos(heading, est.distance);
+            this.dot(ctx, x, y, t.series2);
+        }
+        this.dot(ctx, cx, cy, t.textSecondary);
+    }
+
     /** A ≥8px marker with a 2px surface ring. */
     private dot(
         ctx: CanvasRenderingContext2D,
@@ -839,11 +879,7 @@ export class SonarView {
     }
 }
 
-function rms(values: number[]): number {
-    return Math.sqrt(values.reduce((s, v) => s + v * v, 0) / values.length);
-}
-
-function mm(metres: number): string {
-    const v = metres * 1000;
-    return `${v < 1 ? v.toFixed(2) : v.toFixed(1)} mm`;
+function cm(metres: number): string {
+    const v = metres * 100;
+    return `${v < 10 ? v.toFixed(1) : v.toFixed(0)} cm`;
 }

@@ -3,21 +3,24 @@
 // base64-encoded little-endian float32.
 
 import type { SonarConfig } from './config';
-import type { Background } from './dsp';
 
 const FORMAT = 'sonar-recording';
-/** Version 1 stored a background power profile, which is not used any more. */
-const VERSION = 2;
+/**
+ * Versions 1 and 2 stored a full ping period from emitFrame on, the peak
+ * positions of the analysis then in use, and possibly a calibrated
+ * background, which is not used any more.
+ */
+const VERSION = 3;
 
 export interface RecordedPing {
     pingId: number;
     emitFrame: number;
-    /** Mic samples from emitFrame on, exactly as analysed. */
+    /** Context frame of samples[0]. */
+    startFrame: number;
+    /** Mic samples, exactly as analysed. */
     samples: Float32Array;
-    /** The live analysis, for comparison: peak positions in samples. */
-    direct: number;
-    echo: number | null;
-    echoSnr: number;
+    /** The live analysis, for comparison: distance in m, if an echo was found. */
+    distance: number | null;
 }
 
 export interface Recording {
@@ -26,25 +29,30 @@ export interface Recording {
     sampleRate: number;
     config: SonarConfig;
     chirp: Float32Array;
-    /** Background in use, if any. */
-    background?: Background | null;
     pings: RecordedPing[];
 }
 
-interface RecordingFile
-    extends Omit<Recording, 'chirp' | 'background' | 'pings'> {
+interface PingFile extends Omit<RecordedPing, 'samples' | 'startFrame'> {
+    /** Missing before version 3, where samples start at emitFrame. */
+    startFrame?: number;
+    samples: string;
+}
+
+interface RecordingFile extends Omit<Recording, 'chirp' | 'pings'> {
     format: typeof FORMAT;
-    version: 1 | typeof VERSION;
+    version: number;
     chirp: string;
-    background?: { re: string; im: string } | string | null;
-    pings: (Omit<RecordedPing, 'samples'> & { samples: string })[];
+    pings: PingFile[];
 }
 
 /** Keeps the most recent `capacity` pings. */
 export class Recorder {
     private pings: RecordedPing[] = [];
+    capacity: number;
 
-    constructor(private readonly capacity: number) {}
+    constructor(capacity: number) {
+        this.capacity = capacity;
+    }
 
     get size(): number {
         return this.pings.length;
@@ -52,7 +60,7 @@ export class Recorder {
 
     push(ping: RecordedPing): void {
         this.pings.push(ping);
-        if (this.pings.length > this.capacity) {
+        while (this.pings.length > this.capacity) {
             this.pings.shift();
         }
     }
@@ -75,12 +83,6 @@ export function encodeRecording(rec: Recording): string {
         sampleRate: rec.sampleRate,
         config: rec.config,
         chirp: toBase64(rec.chirp),
-        background: rec.background
-            ? {
-                  re: toBase64(rec.background.re),
-                  im: toBase64(rec.background.im),
-              }
-            : null,
         pings: rec.pings.map((p) => ({ ...p, samples: toBase64(p.samples) })),
     };
     return JSON.stringify(file);
@@ -90,24 +92,22 @@ export function decodeRecording(json: string): Recording {
     const file = JSON.parse(json) as RecordingFile;
     if (
         file.format !== FORMAT ||
-        (file.version !== 1 && file.version !== VERSION)
+        !(file.version >= 1 && file.version <= VERSION)
     ) {
         throw new Error('Not a sonar recording (or an unsupported version)');
     }
-    const bg = file.background;
     return {
         createdAt: file.createdAt,
         userAgent: file.userAgent,
         sampleRate: file.sampleRate,
         config: file.config,
         chirp: fromBase64(file.chirp),
-        background:
-            bg && typeof bg === 'object'
-                ? { re: fromBase64(bg.re), im: fromBase64(bg.im) }
-                : null,
         pings: file.pings.map((p) => ({
-            ...p,
+            pingId: p.pingId,
+            emitFrame: p.emitFrame,
+            startFrame: p.startFrame ?? p.emitFrame,
             samples: fromBase64(p.samples),
+            distance: p.distance ?? null,
         })),
     };
 }
@@ -131,4 +131,23 @@ function fromBase64(s: string): Float32Array {
         bytes[i] = binary.charCodeAt(i);
     }
     return new Float32Array(bytes.buffer);
+}
+
+/**
+ * The samples of `ping` for the frames [start, start + length); frames it
+ * does not cover are silent.
+ */
+export function sliceRecorded(
+    ping: RecordedPing,
+    start: number,
+    length: number
+): Float32Array {
+    const out = new Float32Array(length);
+    const offset = start - ping.startFrame;
+    const from = Math.max(0, -offset);
+    const to = Math.min(length, ping.samples.length - offset);
+    if (to > from) {
+        out.set(ping.samples.subarray(offset + from, offset + to), from);
+    }
+    return out;
 }

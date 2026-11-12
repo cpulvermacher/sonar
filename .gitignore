@@ -12,7 +12,8 @@ dist
 dist-ssr
 *.local
 
-# Full recordings saved from the app (trimmed copies live in src/test/fixtures)
+# Full recordings saved from the app (scripts/make-fixtures.ts trims them
+# into src/test/fixtures)
 /sonar-*.json
 
 # Editor directories and files

@@ -1,4 +1,4 @@
-// Sonar parameters. Defaults only for now; the settings UI comes later.
+// Sonar parameters.
 
 export interface Band {
     label: string;
@@ -47,6 +47,9 @@ export function maxChirpFrequency(sampleRate: number): number {
     return 0.45 * sampleRate;
 }
 
+/** Ping rates offered in the UI, in pings per second. */
+export const PING_RATES = [4, 10, 20, 30];
+
 export interface SonarConfig {
     band: BandId;
     /** Multiplies the band's frequencies, e.g. to move it into ultrasound. */
@@ -57,33 +60,45 @@ export interface SonarConfig {
     interval: number;
     /** Peak amplitude of the emitted chirp (0..1). */
     amplitude: number;
-    /** Echoes closer than this (m) are ignored; masks the direct path's tail. */
-    minRange: number;
+    /**
+     * Added to every measured distance (m). The delay is measured against
+     * the sound that reaches the mic directly from the speaker, which has
+     * itself travelled the speaker–mic distance; half of that is missing
+     * from the measured range.
+     */
+    rangeOffset: number;
+    /**
+     * Echoes are not searched for closer than this (m, before rangeOffset):
+     * there the phone's own response is too strong and too variable.
+     */
+    blindRange: number;
     /** Echoes farther than this (m) are not searched for. */
     maxRange: number;
     /** Air temperature in °C, for the speed of sound. */
     temperature: number;
     /** Assumed uncertainty of the temperature, in °C. */
     temperatureSigma: number;
-    /** Number of recent pings the distance estimate is based on. */
-    averagePings: number;
-    /** Echoes with a lower SNR (dB) are ignored. */
-    minEchoSnrDb: number;
-    /** An echo peak must rise this much (dB) above the trough before a taller neighbour. */
-    minEchoProminenceDb: number;
+    /**
+     * Weakest echo accepted from 0.5 m, in dB relative to the direct path;
+     * it scales with 1/distance like the echo of a wall. Lower values also
+     * pick up small or oblique objects (and the person holding the phone).
+     */
+    sensitivityDb: number;
+    /** An echo must rise this much (dB) above the learned clutter floor. */
+    minExcessDb: number;
 }
 
 export const DEFAULT_CONFIG: SonarConfig = {
     band: 'audible',
     frequencyScale: 1,
     chirpDuration: 0.01,
-    interval: 0.25,
+    interval: 0.05,
     amplitude: 0.8,
-    minRange: 0.15,
+    rangeOffset: 0.06,
+    blindRange: 0.08,
     maxRange: 2,
     temperature: 20,
     temperatureSigma: 2,
-    averagePings: 10,
-    minEchoSnrDb: 18,
-    minEchoProminenceDb: 6,
+    sensitivityDb: -32,
+    minExcessDb: 7,
 };

@@ -9,19 +9,19 @@ import {
     type BandId,
     chirpBand,
     DEFAULT_CONFIG,
+    PING_RATES,
     type SonarConfig,
 } from './config';
-import { type Background, backgroundPower, speedOfSound } from './dsp';
-import { DistanceEstimator } from './estimate';
-import type { FromWorker, ToWorker } from './messages';
+import { speedOfSound } from './dsp';
+import type { FromWorker } from './messages';
+import { watchHeading } from './orientation';
 import { encodeRecording, Recorder } from './recording';
-import { SonarView } from './viz';
+import { DistanceTracker } from './tracker';
+import { SonarView, type ViewOptions } from './viz';
 import './style.css';
 
-/** Pings kept for "Save recording" (10 s at the default interval). */
-const RECORDING_PINGS = 40;
-/** Pings averaged for the background (5 s at the default interval). */
-const CALIBRATION_PINGS = 20;
+/** Seconds of pings kept for "Save recording". */
+const RECORDING_SECONDS = 10;
 
 function el<T extends HTMLElement>(id: string): T {
     const node = document.getElementById(id);
@@ -33,32 +33,46 @@ function el<T extends HTMLElement>(id: string): T {
 
 const button = el<HTMLButtonElement>('toggle');
 const saveButton = el<HTMLButtonElement>('save');
-const calibrateButton = el<HTMLButtonElement>('calibrate');
-const clearBgButton = el<HTMLButtonElement>('clear-bg');
-const bgStatus = el<HTMLElement>('bg-status');
 const bandSelect = el<HTMLSelectElement>('band');
 const scaleInput = el<HTMLInputElement>('freq-scale');
+const rateSelect = el<HTMLSelectElement>('rate');
+const offsetInput = el<HTMLInputElement>('offset');
 const chirpRange = el<HTMLElement>('chirp-range');
 const status = el<HTMLElement>('status');
 const errorBox = el<HTMLElement>('error');
+const mapPanel = el<HTMLElement>('map-panel');
 el('version').textContent =
     `Version ${import.meta.env.VITE_GIT_VERSION || 'dev'}`;
 
-/** Power ratio to dB. */
-const toDb = (ratio: number) => 10 * Math.log10(ratio);
+type Settings = Pick<
+    SonarConfig,
+    'band' | 'frequencyScale' | 'interval' | 'rangeOffset'
+>;
 
-// The chirp settings are applied on Start.
+function viewOptions(config: SonarConfig, sampleRate: number): ViewOptions {
+    return {
+        metresPerSample: speedOfSound(config.temperature) / sampleRate / 2,
+        rangeOffset: config.rangeOffset,
+        minRange: config.blindRange + config.rangeOffset,
+        maxRange: config.maxRange,
+        interval: config.interval,
+    };
+}
+
+function makeTracker(config: SonarConfig): DistanceTracker {
+    return new DistanceTracker({
+        interval: config.interval,
+        // c = 331.3 + 0.606·T, so dc/dT = 0.606 m/s per °C.
+        soundSpeedRelError:
+            (0.606 * config.temperatureSigma) /
+            speedOfSound(config.temperature),
+    });
+}
+
+// The settings are applied on Start.
 let config: SonarConfig = DEFAULT_CONFIG;
-const estimator = new DistanceEstimator({
-    window: config.averagePings,
-    minSnrDb: config.minEchoSnrDb,
-    outlierSigmas: 3,
-    minAccepted: 3,
-    // c = 331.3 + 0.606·T, so dc/dT = 0.606 m/s per °C.
-    soundSpeedRelError:
-        (0.606 * config.temperatureSigma) / speedOfSound(config.temperature),
-});
-const view = new SonarView(config, {
+let tracker = makeTracker(config);
+const view = new SonarView(viewOptions(config, 48000), {
     distance: el('distance'),
     sigma: el('sigma'),
     details: el('details'),
@@ -66,6 +80,7 @@ const view = new SonarView(config, {
     ascanTip: el('ascan-tip'),
     echogram: el('echogram'),
     echogramTip: el('echogram-tip'),
+    map: el('map'),
     table: el('pings'),
 });
 
@@ -73,51 +88,61 @@ let session: AudioSession | null = null;
 let pingCount = 0;
 
 // Kept after Stop, so a recording can still be saved.
-const recorder = new Recorder(RECORDING_PINGS);
+const recorder = new Recorder(0);
 let recordingInfo: { sampleRate: number; chirp: Float32Array } | null = null;
 
-// Only valid for this session: it depends on how the phone is held or what
-// it lies on, so it is not kept across sessions.
-let background: { createdAt: Date; value: Background } | null = null;
-/** Pings still to go while calibrating, else null. */
-let calibrationLeft: number | null = null;
-
-function post(msg: ToWorker) {
-    session?.worker.postMessage(msg);
-}
+/** Latest direction of the phone, if it has an orientation sensor. */
+let heading: number | null = null;
+let stopHeading: (() => void) | null = null;
 
 /** Remembered in this browser, as a convenience. */
-const CHIRP_KEY = 'sonar.chirp.v1';
+const SETTINGS_KEY = 'sonar.settings.v2';
 
 for (const [id, band] of Object.entries(BANDS)) {
     bandSelect.add(new Option(band.label, id));
 }
+for (const rate of PING_RATES) {
+    rateSelect.add(new Option(String(rate), String(rate)));
+}
+rateSelect.value = String(Math.round(1 / DEFAULT_CONFIG.interval));
+offsetInput.value = String(DEFAULT_CONFIG.rangeOffset * 100);
 try {
-    const saved = JSON.parse(localStorage.getItem(CHIRP_KEY) ?? 'null');
+    const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? 'null');
     if (saved && saved.band in BANDS) {
         bandSelect.value = saved.band;
         scaleInput.value = String(saved.frequencyScale);
+        rateSelect.value = String(Math.round(1 / saved.interval));
+        offsetInput.value = String(saved.rangeOffset * 100);
     }
 } catch {
     // Defaults stay.
 }
 
-/** The chirp settings from the controls, or null if the multiplier is invalid. */
-function chirpSettings(): Pick<SonarConfig, 'band' | 'frequencyScale'> | null {
+/** The settings from the controls, or null if one of them is invalid. */
+function readSettings(): Settings | null {
     const frequencyScale = scaleInput.valueAsNumber;
-    if (!(frequencyScale > 0)) {
+    const rate = Number(rateSelect.value);
+    const offset = offsetInput.valueAsNumber;
+    if (!(frequencyScale > 0) || !(rate > 0) || !(offset >= 0)) {
         return null;
     }
-    return { band: bandSelect.value as BandId, frequencyScale };
+    return {
+        band: bandSelect.value as BandId,
+        frequencyScale,
+        interval: 1 / rate,
+        rangeOffset: offset / 100,
+    };
 }
 
-function renderChirp() {
+function renderSettings() {
     const running = session !== null;
-    bandSelect.disabled = running;
-    scaleInput.disabled = running;
-    const settings = chirpSettings();
+    for (const input of [bandSelect, scaleInput, rateSelect, offsetInput]) {
+        input.disabled = running;
+    }
+    const settings = readSettings();
     if (!settings) {
-        chirpRange.textContent = 'Enter a multiplier above 0.';
+        chirpRange.textContent =
+            'Enter a multiplier above 0 and an offset of 0 or more.';
         return;
     }
     const band = chirpBand({ ...config, ...settings });
@@ -125,51 +150,21 @@ function renderChirp() {
     chirpRange.textContent = `Sweeps ${kHz(band.f0)}–${kHz(band.f1)} kHz${running ? '' : ', applied on Start'}.`;
 }
 
-for (const input of [bandSelect, scaleInput]) {
+for (const input of [bandSelect, scaleInput, rateSelect, offsetInput]) {
     input.addEventListener('input', () => {
-        renderChirp();
-        const settings = chirpSettings();
+        renderSettings();
+        const settings = readSettings();
         if (!settings) {
             return;
         }
         try {
-            localStorage.setItem(CHIRP_KEY, JSON.stringify(settings));
+            localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
         } catch {
             // Not remembered.
         }
     });
 }
-renderChirp();
-
-/** Drops the background, in the worker and the view. */
-function clearBackground() {
-    background = null;
-    post({ type: 'background', background: null });
-    view.setBackground(null);
-    renderBackground();
-}
-
-function renderBackground() {
-    const running = session !== null;
-    calibrateButton.disabled = !running || calibrationLeft !== null;
-    clearBgButton.disabled =
-        !running || !background || calibrationLeft !== null;
-    if (calibrationLeft !== null) {
-        bgStatus.textContent = `Calibrating… ${calibrationLeft} pings to go. Hold the phone as you will when measuring, pointed at open space.`;
-    } else if (background && session) {
-        const range =
-            (background.value.re.length * speedOfSound(config.temperature)) /
-            session.ctx.sampleRate /
-            2;
-        const when = background.createdAt.toLocaleTimeString();
-        bgStatus.textContent = `Background calibrated at ${when}; removes the phone's own echoes up to ${range.toFixed(2)} m. Recalibrate after changing your grip or the phone's surroundings.`;
-    } else if (running) {
-        bgStatus.textContent =
-            'No background calibrated. Hold the phone as you will when measuring, point it at open space (nothing within about 1 m), then press Calibrate background.';
-    } else {
-        bgStatus.textContent = '';
-    }
-}
+renderSettings();
 
 function onWorkerMessage(msg: FromWorker) {
     if (!session) {
@@ -184,53 +179,30 @@ function onWorkerMessage(msg: FromWorker) {
         }
         case 'echo': {
             const fs = session.ctx.sampleRate;
-            // Samples of round-trip delay -> metres of one-way distance.
-            const metresPerSample = speedOfSound(config.temperature) / fs / 2;
-            const distance =
-                msg.echo === null
-                    ? null
-                    : (msg.echo - msg.direct) * metresPerSample;
-            const sigma = msg.delaySigma * metresPerSample;
-            estimator.push({ distance, sigma, snr: msg.echoSnr });
+            // A ping that was not heard counts as one without an echo.
+            const estimate = tracker.push(msg.valid ? msg.distance : null);
             recorder.push({
                 pingId: msg.pingId,
                 emitFrame: msg.emitFrame,
+                startFrame: msg.rawStart,
                 samples: msg.raw,
-                direct: msg.direct,
-                echo: msg.echo,
-                echoSnr: msg.echoSnr,
+                distance: msg.distance,
             });
             saveButton.disabled = false;
 
             view.update({
                 pingId: msg.pingId,
-                envelope: msg.envelope,
-                envStart: msg.envStart,
-                envStep: msg.envStep,
-                noiseFloor: msg.noiseFloor,
-                direct: msg.direct,
-                echo: msg.echo,
-                candidates: msg.candidates,
-                metresPerSample,
-                distance,
-                sigma,
-                echoSnrDb: msg.echo === null ? null : toDb(msg.echoSnr),
-                latencyMs: (msg.direct / fs) * 1000,
-                estimate: estimator.estimate(),
+                valid: msg.valid,
+                power: msg.power,
+                threshold: msg.threshold,
+                lagOffset: msg.lagOffset,
+                distance: msg.distance,
+                levelDb: msg.level === null ? null : 10 * Math.log10(msg.level),
+                latencyMs:
+                    msg.latency === null ? null : (msg.latency / fs) * 1000,
+                estimate,
+                heading,
             });
-            break;
-        }
-        case 'calibration': {
-            if (msg.background) {
-                calibrationLeft = null;
-                background = { createdAt: new Date(), value: msg.background };
-                view.setBackground(backgroundPower(msg.background));
-                // Echoes so far were found with the old background.
-                estimator.reset();
-            } else {
-                calibrationLeft = msg.left;
-            }
-            renderBackground();
             break;
         }
     }
@@ -241,74 +213,69 @@ function setRunning(running: boolean) {
     button.setAttribute('aria-pressed', String(running));
 }
 
+async function stop() {
+    const s = session;
+    session = null;
+    stopHeading?.();
+    stopHeading = null;
+    heading = null;
+    if (s) {
+        await closeAudio(s);
+    }
+    status.textContent = 'Stopped';
+    setRunning(false);
+    renderSettings();
+}
+
+async function start() {
+    const settings = readSettings();
+    if (!settings) {
+        throw new Error(
+            'Enter a frequency multiplier above 0 and an offset of 0 or more.'
+        );
+    }
+    config = { ...DEFAULT_CONFIG, ...settings };
+    status.textContent = 'Starting…';
+    // Asked for first: on iOS only right after the tap.
+    stopHeading = await watchHeading((degrees) => {
+        heading = degrees;
+        mapPanel.hidden = false;
+    });
+    session = await openAudio(onWorkerMessage);
+    renderSettings();
+    pingCount = 0;
+    tracker = makeTracker(config);
+    view.reset(viewOptions(config, session.ctx.sampleRate));
+    recorder.clear();
+    recorder.capacity = Math.round(RECORDING_SECONDS / config.interval);
+    saveButton.disabled = true;
+    const chirp = startPinging(session, config, (id) => {
+        pingCount = id + 1;
+    });
+    recordingInfo = { sampleRate: session.ctx.sampleRate, chirp };
+    status.textContent = `${session.ctx.sampleRate} Hz`;
+    setRunning(true);
+}
+
 button.addEventListener('click', async () => {
     button.disabled = true;
     errorBox.textContent = '';
     try {
         if (session) {
-            const s = session;
-            session = null;
-            calibrationLeft = null;
-            await closeAudio(s);
-            status.textContent = 'Stopped';
-            setRunning(false);
-            renderBackground();
-            renderChirp();
+            await stop();
         } else {
-            const settings = chirpSettings();
-            if (!settings) {
-                throw new Error('Enter a frequency multiplier above 0.');
-            }
-            config = { ...DEFAULT_CONFIG, ...settings };
-            status.textContent = 'Starting…';
-            session = await openAudio(onWorkerMessage);
-            renderChirp();
-            pingCount = 0;
-            estimator.reset();
-            view.reset();
-            recorder.clear();
-            saveButton.disabled = true;
-            const chirp = startPinging(session, config, (id) => {
-                pingCount = id + 1;
-            });
-            recordingInfo = { sampleRate: session.ctx.sampleRate, chirp };
-            clearBackground();
-            status.textContent = `${session.ctx.sampleRate} Hz`;
-            setRunning(true);
+            await start();
         }
     } catch (err) {
         // E.g. a chirp too high for the sample rate, after audio was opened.
-        if (session) {
-            await closeAudio(session).catch(() => {});
-        }
-        session = null;
-        calibrationLeft = null;
-        renderBackground();
-        renderChirp();
-        setRunning(false);
-        status.textContent = 'Stopped';
+        await stop().catch(() => {});
         errorBox.textContent = err instanceof Error ? err.message : String(err);
     } finally {
         button.disabled = false;
     }
 });
 
-calibrateButton.addEventListener('click', () => {
-    if (!session) {
-        return;
-    }
-    calibrationLeft = CALIBRATION_PINGS;
-    post({ type: 'calibrate', pings: CALIBRATION_PINGS });
-    renderBackground();
-});
-
-clearBgButton.addEventListener('click', () => {
-    if (!session) {
-        return;
-    }
-    clearBackground();
-    estimator.reset();
-});
+el('clear-map').addEventListener('click', () => view.clearMap());
 
 saveButton.addEventListener('click', () => {
     if (!recordingInfo || recorder.size === 0) {
@@ -321,7 +288,6 @@ saveButton.addEventListener('click', () => {
         sampleRate: recordingInfo.sampleRate,
         config,
         chirp: recordingInfo.chirp,
-        background: background?.value ?? null,
         pings: recorder.snapshot(),
     });
     const url = URL.createObjectURL(

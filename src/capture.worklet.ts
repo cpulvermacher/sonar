@@ -12,7 +12,8 @@ declare function registerProcessor(
     ctor: new () => AudioWorkletProcessor
 ): void;
 
-const BATCH_FRAMES = 2048;
+// Small enough not to add much to the reaction time (about 10 ms at 96 kHz).
+const BATCH_FRAMES = 1024;
 
 class CaptureProcessor extends AudioWorkletProcessor {
     private out: MessagePort | null = null;

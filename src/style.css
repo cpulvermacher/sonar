@@ -108,9 +108,13 @@ button:disabled {
     flex-wrap: wrap;
 }
 
-.controls.background,
-.controls.chirp {
+.controls.settings {
     margin-top: 8px;
+}
+
+button.small {
+    font-size: 13px;
+    padding: 0.25em 0.75em;
 }
 
 .controls label {
@@ -143,7 +147,6 @@ input:disabled {
 }
 
 #chirp-range,
-#bg-status,
 #status {
     color: var(--text-muted);
     font-size: 13px;
@@ -235,16 +238,9 @@ input:disabled {
     border-radius: 2px;
 }
 
-.legend .stem {
-    width: 2px;
-    height: 12px;
-    margin: 0 10px 0 4px;
-    background: var(--text-secondary);
-}
-
-.legend .removed {
+.legend .blind {
     background: var(--text-muted);
-    opacity: 0.4;
+    opacity: 0.25;
 }
 
 .legend .dashed {
@@ -278,6 +274,10 @@ input:disabled {
 
 #echogram {
     height: 260px;
+}
+
+#map {
+    height: 320px;
 }
 
 .tooltip {

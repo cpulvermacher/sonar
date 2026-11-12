@@ -1,7 +1,6 @@
 // Message types shared between the main thread, the capture worklet and the DSP worker.
 
 import type { SonarConfig } from './config';
-import type { Background, PeakCandidate } from './dsp';
 
 /** Worklet -> worker: a batch of consecutive mic samples. */
 export interface CaptureBlock {
@@ -28,17 +27,32 @@ export type ToWorker =
           type: 'ping';
           pingId: number;
           emitFrame: number;
-      }
-    | {
-          /** Learn the background from the next `pings` pings. */
-          type: 'calibrate';
-          pings: number;
-      }
-    | {
-          /** Use this background (see dsp.Background), or none. */
-          type: 'background';
-          background: Background | null;
       };
+
+/** Analysis of one ping, see ranging.PingResult. */
+export interface EchoMessage {
+    type: 'echo';
+    pingId: number;
+    emitFrame: number;
+    /** False if the direct path was not found; then only `raw` is meaningful. */
+    valid: boolean;
+    /** Delay from scheduling the chirp to hearing it, in frames, if known. */
+    latency: number | null;
+    /** Distance of the echo in m, if there is one. */
+    distance: number | null;
+    /** Power of the echo relative to the direct path. */
+    level: number | null;
+    /** Smoothed power relative to the direct path; power[l] is at lag l + lagOffset. */
+    power: Float32Array;
+    /** Power an echo needs at each lag. */
+    threshold: Float32Array;
+    lagOffset: number;
+    /** The mic samples that were analysed, starting at context frame rawStart. */
+    raw: Float32Array;
+    rawStart: number;
+    /** Position of the direct path in `raw`. */
+    direct: number;
+}
 
 /** Worker -> main. */
 export type FromWorker =
@@ -48,31 +62,4 @@ export type FromWorker =
           /** RMS level of the most recent batch, in dBFS. */
           rmsDb: number;
       }
-    | {
-          /** Analysis of one ping. Sample positions are relative to emitFrame. */
-          type: 'echo';
-          pingId: number;
-          emitFrame: number;
-          direct: number;
-          /** Power SNR of the direct and echo peaks (echo: 0 if none). */
-          directSnr: number;
-          echo: number | null;
-          echoSnr: number;
-          /** Strongest local maxima in the echo search range, with their prominence. */
-          candidates: PeakCandidate[];
-          /** Model standard deviation of (echo − direct), in samples. */
-          delaySigma: number;
-          noiseFloor: number;
-          /** Max-pooled correlation envelope; envelope[i] covers samples from envStart + i·envStep. */
-          envelope: Float32Array;
-          envStart: number;
-          envStep: number;
-          /** The raw mic samples that were analysed, starting at emitFrame. */
-          raw: Float32Array;
-      }
-    | {
-          /** Calibration progress; `background` is set (and in use) once `left` is 0. */
-          type: 'calibration';
-          left: number;
-          background: Background | null;
-      };
+    | EchoMessage;
