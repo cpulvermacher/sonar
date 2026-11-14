@@ -10,8 +10,13 @@
             <h1>Sonar</h1>
             <div class="controls main">
                 <button id="toggle" type="button" aria-pressed="false">Start</button>
-                <button id="save" type="button" class="secondary" disabled>Save recording</button>
-                <span id="status">Stopped</span>
+                <div class="readout" aria-live="polite">
+                    <div class="hero">
+                        <span id="distance">—</span>
+                        <span id="sigma"></span>
+                    </div>
+                    <div id="details"></div>
+                </div>
             </div>
             <div class="controls settings">
                 <label>Chirp <select id="band"></select></label>
@@ -19,17 +24,10 @@
                 <label>Pings per second <select id="rate"></select></label>
                 <label title="Half the distance between the phone's speaker and its microphone; added to every measurement">Offset (cm) <input id="offset" type="number" min="0" max="20" step="0.5" inputmode="decimal" /></label>
                 <span id="chirp-range"></span>
+                <button id="save" type="button" class="secondary small" disabled>Save recording</button>
+                <span id="status"></span>
             </div>
             <p id="error" role="alert"></p>
-
-            <section class="panel readout" aria-live="polite">
-                <div class="label">Distance</div>
-                <div class="hero">
-                    <span id="distance">—</span>
-                    <span id="sigma"></span>
-                </div>
-                <div id="details"></div>
-            </section>
 
             <section class="panel chart">
                 <h2>Latest ping</h2>

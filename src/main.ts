@@ -221,7 +221,7 @@ async function stop() {
     if (s) {
         await closeAudio(s);
     }
-    status.textContent = 'Stopped';
+    status.textContent = '';
     setRunning(false);
     renderSettings();
 }
@@ -234,7 +234,6 @@ async function start() {
         );
     }
     config = { ...DEFAULT_CONFIG, ...settings };
-    status.textContent = 'Starting…';
     // Asked for first: on iOS only right after the tap.
     stopHeading = await watchHeading((degrees) => {
         heading = degrees;

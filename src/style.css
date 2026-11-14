@@ -116,6 +116,12 @@ button:disabled {
     margin: 0 -16px;
     padding: 8px 16px;
     background: var(--page);
+    flex-wrap: nowrap;
+    border-bottom: 1px solid var(--border);
+}
+
+.controls.settings {
+    margin-top: 12px;
 }
 
 button.small {
@@ -175,35 +181,37 @@ input:disabled {
     margin: 16px 0;
 }
 
-/* Readout */
+/* Readout, in the sticky bar next to Start/Stop. */
 
-.readout .label {
-    color: var(--text-secondary);
-    font-size: 13px;
+.readout {
+    flex: 1;
+    min-width: 0;
 }
 
 .hero {
     display: flex;
     align-items: baseline;
-    gap: 12px;
+    gap: 8px;
     flex-wrap: wrap;
 }
 
 #distance {
-    font-size: 56px;
+    font-size: 32px;
     font-weight: 600;
     line-height: 1.1;
+    font-variant-numeric: tabular-nums;
 }
 
 #sigma {
-    font-size: 22px;
+    font-size: 16px;
     color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
 }
 
 #details {
     color: var(--text-secondary);
-    font-size: 13px;
-    margin-top: 4px;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
 }
 
 /* Charts */
