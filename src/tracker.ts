@@ -64,6 +64,9 @@ export class DistanceTracker {
     /** Running mean square of the measurements' deviation from the updated track. */
     private scatter = 0;
     private peak = UNAMBIGUOUS;
+    /** The latest rival echo on either side of the track (m). */
+    private rivalNearer: number | null = null;
+    private rivalFarther: number | null = null;
     private readonly peakAlpha: number;
 
     constructor(options: TrackerOptions) {
@@ -81,19 +84,45 @@ export class DistanceTracker {
         this.misses = 0;
         this.pending = [];
         this.scatter = 0;
-        this.peak = UNAMBIGUOUS;
+        this.setPeak(UNAMBIGUOUS);
     }
 
     /** Moves the averaged peak ambiguity towards that of one ping. */
     private blendPeak(ping: PeakAmbiguity): void {
         const a = this.peakAlpha;
         const mix = (old: number, now: number) => old + a * (now - old);
+        this.noteRival(ping.rival);
+        const nearer = mix(this.peak.nearer, ping.nearer);
+        const farther = mix(this.peak.farther, ping.farther);
         this.peak = {
             confidence: mix(this.peak.confidence, ping.confidence),
-            nearer: mix(this.peak.nearer, ping.nearer),
-            farther: mix(this.peak.farther, ping.farther),
-            rival: ping.rival,
+            nearer,
+            farther,
+            // The errors are averages over pings that can each have had
+            // another rival: the one named has to be on the side that the
+            // larger error is on, not simply the latest ping's.
+            rival: nearer > farther ? this.rivalNearer : this.rivalFarther,
         };
+    }
+
+    /** Remembers a ping's rival as the latest on its side of the track. */
+    private noteRival(rival: number | null): void {
+        if (rival === null || this.track === null) {
+            return;
+        }
+        if (rival < this.track) {
+            this.rivalNearer = rival;
+        } else {
+            this.rivalFarther = rival;
+        }
+    }
+
+    /** Starts the averages afresh with one ping's ambiguity. */
+    private setPeak(ping: PeakAmbiguity): void {
+        this.rivalNearer = null;
+        this.rivalFarther = null;
+        this.peak = ping;
+        this.noteRival(ping.rival);
     }
 
     /**
@@ -136,7 +165,7 @@ export class DistanceTracker {
                 this.scatter = 0;
                 this.misses = 0;
                 this.pending = [];
-                this.peak = ambiguity;
+                this.setPeak(ambiguity);
             } else {
                 if (this.track !== null) {
                     // Either this ping or the track has the wrong echo.

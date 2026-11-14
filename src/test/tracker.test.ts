@@ -47,6 +47,22 @@ describe('peak ambiguity', () => {
         expect(back?.nearer).toBeGreaterThan(0.03);
     });
 
+    it('names the rival on the side of the larger error', () => {
+        const tracker = make();
+        feed(tracker, [1.27, 1.27]);
+        // A stray ping far in front: most of the error is towards the phone.
+        tracker.push(0.3, sure);
+        // The next ping fits again and has a faint rival just behind it.
+        const peak = tracker.push(1.27, {
+            confidence: 0.99,
+            nearer: 0,
+            farther: 0.001,
+            rival: 1.36,
+        })?.peak;
+        expect(peak?.nearer).toBeGreaterThan(peak?.farther as number);
+        expect(peak?.rival).toBe(0.3);
+    });
+
     it('starts afresh when the track jumps', () => {
         const tracker = make();
         feed(tracker, [0.5, 0.5]);
