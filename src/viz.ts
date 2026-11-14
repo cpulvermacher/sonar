@@ -375,9 +375,16 @@ export class SonarView {
             el.distance.textContent = `${est.distance.toFixed(2)} m`;
             // Two separate uncertainties: of the echo's position, and of
             // this being the right echo at all.
-            el.sigma.textContent =
-                `± ${cm(est.sigma)} · peak ` +
-                `+${cm(est.peak.farther)} −${cm(est.peak.nearer)}`;
+            // The peak errors are stacked like an asymmetric ± (away from
+            // the phone above, towards it below) so they take one line.
+            const farther = document.createElement('span');
+            farther.textContent = `+${cm(est.peak.farther)}`;
+            const nearer = document.createElement('span');
+            nearer.textContent = `−${cm(est.peak.nearer)}`;
+            const stack = document.createElement('span');
+            stack.className = 'pm-stack';
+            stack.append(farther, nearer);
+            el.sigma.replaceChildren(`± ${cm(est.sigma)} · peak `, stack);
         }
         // The top bar keeps only what qualifies the reading itself: how sure
         // it is the right echo, and whether the latest ping was heard at all
@@ -385,7 +392,7 @@ export class SonarView {
         const parts: string[] = [];
         if (est) {
             parts.push(
-                `right peak ${(100 * est.peak.confidence).toFixed(0)} %`
+                `confidence ${(100 * est.peak.confidence).toFixed(0)} %`
             );
             if (est.peak.rival !== null && est.peak.confidence < 0.995) {
                 parts.push(`else ${est.peak.rival.toFixed(2)} m`);

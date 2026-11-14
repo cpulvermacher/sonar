@@ -62,8 +62,9 @@ Run tools through the pnpm scripts, not directly:
   stronger one, both moving in step. The nearer one is reported; which is
   the wall surface is not known.
 - Peak ambiguity (`PeakAmbiguity`): every other candidate gets odds from
-  how much clearer it would have had to be; shown as "peak +x −y" (expected
-  error away from / towards the phone) next to the ± of the position.
+  how much clearer it would have had to be; shown as "peak" with +x stacked
+  over −y (expected error away from / towards the phone) next to the ± of
+  the position, and as "confidence" (odds that it is the right echo).
 - The clutter is stable within a session but differs by several dB between
   sessions and grips. Do not persist the floor or a background across
   sessions; that reintroduces near ghosts. Self-deconvolution by the direct

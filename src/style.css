@@ -208,6 +208,14 @@ input:disabled {
     font-variant-numeric: tabular-nums;
 }
 
+.pm-stack {
+    display: inline-flex;
+    flex-direction: column;
+    vertical-align: middle;
+    font-size: 11px;
+    line-height: 1.1;
+}
+
 #details {
     color: var(--text-secondary);
     font-size: 12px;
@@ -325,8 +333,12 @@ input:disabled {
     font-variant-numeric: tabular-nums;
 }
 
-#version {
+footer {
     color: var(--text-muted);
     font-size: 12px;
     font-variant-numeric: tabular-nums;
+}
+
+footer a {
+    color: inherit;
 }
