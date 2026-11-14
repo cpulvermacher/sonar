@@ -14,10 +14,10 @@
     },
     "devDependencies": {
         "@biomejs/biome": "2.4.16",
-        "happy-dom": "^20.9.0",
+        "happy-dom": "^21.0.4",
         "typescript": "^7.0.2",
-        "vite": "^8.3.4",
-        "vitest": "^5.0.5"
+        "vite": "^8.3.8",
+        "vitest": "^5.1.0"
     },
     "dependencies": {},
     "packageManager": "pnpm@12.10.1"
