@@ -9,6 +9,7 @@ import {
     type BandId,
     chirpBand,
     DEFAULT_CONFIG,
+    NEAR_PREFERENCES,
     PING_RATES,
     type SonarConfig,
 } from './config';
@@ -37,6 +38,14 @@ const bandSelect = el<HTMLSelectElement>('band');
 const scaleInput = el<HTMLInputElement>('freq-scale');
 const rateSelect = el<HTMLSelectElement>('rate');
 const offsetInput = el<HTMLInputElement>('offset');
+const preferSelect = el<HTMLSelectElement>('prefer');
+const settingInputs = [
+    bandSelect,
+    scaleInput,
+    rateSelect,
+    offsetInput,
+    preferSelect,
+];
 const chirpRange = el<HTMLElement>('chirp-range');
 const status = el<HTMLElement>('status');
 const errorBox = el<HTMLElement>('error');
@@ -46,7 +55,7 @@ el('version').textContent =
 
 type Settings = Pick<
     SonarConfig,
-    'band' | 'frequencyScale' | 'interval' | 'rangeOffset'
+    'band' | 'frequencyScale' | 'interval' | 'rangeOffset' | 'nearPreferenceDb'
 >;
 
 function viewOptions(config: SonarConfig, sampleRate: number): ViewOptions {
@@ -105,6 +114,10 @@ for (const rate of PING_RATES) {
 }
 rateSelect.value = String(Math.round(1 / DEFAULT_CONFIG.interval));
 offsetInput.value = String(DEFAULT_CONFIG.rangeOffset * 100);
+for (const { label, db } of NEAR_PREFERENCES) {
+    preferSelect.add(new Option(label, String(db)));
+}
+preferSelect.value = String(DEFAULT_CONFIG.nearPreferenceDb);
 try {
     const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? 'null');
     if (saved && saved.band in BANDS) {
@@ -112,6 +125,10 @@ try {
         scaleInput.value = String(saved.frequencyScale);
         rateSelect.value = String(Math.round(1 / saved.interval));
         offsetInput.value = String(saved.rangeOffset * 100);
+        // Missing in settings saved before this choice existed.
+        if (NEAR_PREFERENCES.some((p) => p.db === saved.nearPreferenceDb)) {
+            preferSelect.value = String(saved.nearPreferenceDb);
+        }
     }
 } catch {
     // Defaults stay.
@@ -130,12 +147,13 @@ function readSettings(): Settings | null {
         frequencyScale,
         interval: 1 / rate,
         rangeOffset: offset / 100,
+        nearPreferenceDb: Number(preferSelect.value),
     };
 }
 
 function renderSettings() {
     const running = session !== null;
-    for (const input of [bandSelect, scaleInput, rateSelect, offsetInput]) {
+    for (const input of settingInputs) {
         input.disabled = running;
     }
     const settings = readSettings();
@@ -149,7 +167,7 @@ function renderSettings() {
     chirpRange.textContent = `Sweeps ${kHz(band.f0)}–${kHz(band.f1)} kHz${running ? '' : ', applied on Start'}.`;
 }
 
-for (const input of [bandSelect, scaleInput, rateSelect, offsetInput]) {
+for (const input of settingInputs) {
     input.addEventListener('input', () => {
         renderSettings();
         const settings = readSettings();

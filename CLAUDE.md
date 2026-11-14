@@ -42,6 +42,11 @@ Run tools through the pnpm scripts, not directly:
   empty room"); that was the original bug. Detection is: above the learned
   per-lag minimum (`ClutterFloor`) by `minExcessDb`, and above a 1/r
   sensitivity curve.
+- Echo choice (`findEcho`, `nearPreferenceDb`): nearest candidate wins,
+  except that a weak one in the clutter-limited near zone yields to a
+  clearer one behind it. Comparing candidates at all ranges (by margin over
+  the threshold, or over the learned floor) was tried: the ceiling/floor
+  then beat a distant wall or a hand.
 - The clutter is stable within a session but differs by several dB between
   sessions and grips. Do not persist the floor or a background across
   sessions; that reintroduces near ghosts. Self-deconvolution by the direct

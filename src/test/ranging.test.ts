@@ -139,7 +139,7 @@ describe('findEcho', () => {
     it('returns the nearest of several echoes, to a fraction of a lag', () => {
         const power = flat();
         bump(power, 200, 50);
-        bump(power, 300, 500);
+        bump(power, 300, 100);
         // Shift the nearer one's peak by a fraction of a sample.
         power[199] *= 0.97;
         power[201] *= 1.03;
@@ -147,6 +147,50 @@ describe('findEcho', () => {
         expect(echo?.lag).toBeGreaterThan(200);
         expect(echo?.lag).toBeLessThan(200.5);
         expect(echo?.level).toBe(50);
+    });
+
+    it('passes over a marginal near echo in front of a much clearer one', () => {
+        // 1.5 dB above the threshold of 5, against 20 dB.
+        const power = flat();
+        bump(power, 200, 7);
+        bump(power, 300, 500);
+        expect(findEcho(power, threshold, params)?.lag).toBeCloseTo(300, 0);
+        // On its own, it is reported.
+        const alone = flat();
+        bump(alone, 200, 7);
+        expect(findEcho(alone, threshold, params)?.lag).toBeCloseTo(200, 0);
+    });
+
+    it('always takes the nearest where the clutter does not set the threshold', () => {
+        const power = flat();
+        bump(power, 200, 7);
+        bump(power, 300, 500);
+        // The clutter is far below the threshold: nothing of the phone's
+        // own that could be fluctuating there.
+        const clutter = new Float32Array(n).fill(0.1);
+        expect(findEcho(power, threshold, params, clutter)?.lag).toBeCloseTo(
+            200,
+            0
+        );
+        // Only around the near one does it reach the threshold.
+        clutter.fill(5, 150, 250);
+        expect(findEcho(power, threshold, params, clutter)?.lag).toBeCloseTo(
+            300,
+            0
+        );
+    });
+
+    it('can be set to always take the nearest or the clearest', () => {
+        const power = flat();
+        bump(power, 200, 7);
+        bump(power, 300, 500);
+        bump(power, 400, 400);
+        const pick = (nearPreference: number) =>
+            findEcho(power, threshold, { ...params, nearPreference })?.lag;
+        expect(pick(1e10)).toBeCloseTo(200, 0);
+        expect(pick(1)).toBeCloseTo(300, 0);
+        // Of the two clear ones, still the nearer.
+        expect(pick(2)).toBeCloseTo(300, 0);
     });
 
     it('ignores what is too close or too far', () => {

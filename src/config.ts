@@ -50,6 +50,13 @@ export function maxChirpFrequency(sampleRate: number): number {
 /** Ping rates offered in the UI, in pings per second. */
 export const PING_RATES = [4, 10, 20, 30];
 
+/** Choices for nearPreferenceDb offered in the UI. */
+export const NEAR_PREFERENCES = [
+    { label: 'Nearest', db: 100 },
+    { label: 'Balanced', db: 6 },
+    { label: 'Clearest', db: 3 },
+];
+
 export interface SonarConfig {
     band: BandId;
     /** Multiplies the band's frequencies, e.g. to move it into ultrasound. */
@@ -86,6 +93,14 @@ export interface SonarConfig {
     sensitivityDb: number;
     /** An echo must rise this much (dB) above the learned clutter floor. */
     minExcessDb: number;
+    /**
+     * Of several echoes, the nearest is reported, unless it is close to the
+     * phone (where the phone's own response sets the detection threshold)
+     * and clears the threshold by this much (dB) less than an echo behind
+     * it does. A large value always reports the nearest; small values give
+     * up weak near echoes, such as a hand, for anything clearer behind.
+     */
+    nearPreferenceDb: number;
 }
 
 export const DEFAULT_CONFIG: SonarConfig = {
@@ -101,4 +116,5 @@ export const DEFAULT_CONFIG: SonarConfig = {
     temperatureSigma: 2,
     sensitivityDb: -32,
     minExcessDb: 7,
+    nearPreferenceDb: 6,
 };

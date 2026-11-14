@@ -36,6 +36,8 @@ export interface RangingParams {
     minExcess: number;
     /** Minimum echo power at 0.5 m; scales with 1/distance². */
     sensitivity: number;
+    /** A nearer echo may be weaker than the clearest one by this power ratio, see findEcho. */
+    nearPreference: number;
     floor: FloorOptions;
 }
 
@@ -72,6 +74,7 @@ export function rangingParams(
         minWidth: samples(0.06e-3),
         minExcess: fromDb(config.minExcessDb),
         sensitivity: fromDb(config.sensitivityDb),
+        nearPreference: fromDb(config.nearPreferenceDb),
         floor: {
             // Covers the jitter of the direct path's position.
             dilate: samples(0.05e-3),
@@ -237,45 +240,87 @@ export function echoThreshold(
     return out;
 }
 
+/** A stretch of the profile above the threshold. */
+interface Candidate {
+    start: number;
+    /** Lag of its highest power. */
+    peak: number;
+    /** Largest ratio of power to threshold in it. */
+    margin: number;
+    /** Whether the threshold there is set by the clutter. */
+    inClutter: boolean;
+}
+
 /**
- * The nearest echo: the first stretch of the profile above the threshold,
- * and in it the first local maximum that is not just a foothill (at least
- * half the power of the stretch's maximum).
+ * The echo to report, a balance between the nearest and the clearest one.
+ * Every stretch of the profile above the threshold is a candidate; how far
+ * it rises above the threshold is its margin. The nearest candidate wins,
+ * with one exception: where the threshold is set by the clutter (close to
+ * the phone), a candidate is passed over if its margin is less than
+ * 1/nearPreference of that of a candidate behind it. Something that barely
+ * clears the clutter in front of a clear echo is more likely a fluctuation
+ * of the phone's own response than the thing being measured.
+ *
+ * Further out, where the threshold is the sensitivity curve, the nearest
+ * always wins: there the alternatives are things like the ceiling, which
+ * are often clearer than a distant wall and would win too easily.
+ *
+ * Within a stretch, the echo is at the first local maximum that is not
+ * just a foothill (at least half the power of the stretch's maximum).
+ *
+ * @param clutter the clutter part of the threshold, see echoThreshold; by
+ *   default all of the threshold counts as clutter
  */
 export function findEcho(
     power: Float32Array,
     threshold: Float32Array,
-    p: RangingParams
+    p: RangingParams,
+    clutter: Float32Array = threshold
 ): Echo | null {
     const end = Math.min(p.maxLag, power.length - 1);
+    const candidates: Candidate[] = [];
     let l = p.minLag;
     while (l <= end) {
         if (power[l] < threshold[l]) {
             l++;
             continue;
         }
-        const start = l;
-        let peak = l;
+        const c = { start: l, peak: l, margin: 0, inClutter: false };
         while (l <= end && power[l] >= threshold[l]) {
-            if (power[l] > power[peak]) {
-                peak = l;
+            if (power[l] > power[c.peak]) {
+                c.peak = l;
+            }
+            if (power[l] > c.margin * threshold[l]) {
+                c.margin = power[l] / threshold[l];
+                c.inClutter = clutter[l] >= threshold[l];
             }
             l++;
         }
-        if (l - start < p.minWidth) {
-            continue;
-        }
-        for (let k = start; k <= peak; k++) {
-            const isMax =
-                k === peak ||
-                (power[k] >= power[Math.max(0, k - 1)] &&
-                    power[k] > power[k + 1]);
-            if (isMax && power[k] >= 0.5 * power[peak]) {
-                return { lag: refine(power, k), level: power[k] };
-            }
+        if (l - c.start >= p.minWidth) {
+            candidates.push(c);
         }
     }
-    return null;
+    // The clearest of the candidates behind each one.
+    let behind = 0;
+    let chosen: Candidate | null = null;
+    for (const c of candidates.reverse()) {
+        if (!c.inClutter || c.margin * p.nearPreference >= behind) {
+            chosen = c;
+        }
+        behind = Math.max(behind, c.margin);
+    }
+    if (!chosen) {
+        return null;
+    }
+    const { start, peak } = chosen;
+    for (let k = start; k < peak; k++) {
+        const isMax =
+            power[k] >= power[Math.max(0, k - 1)] && power[k] > power[k + 1];
+        if (isMax && power[k] >= 0.5 * power[peak]) {
+            return { lag: refine(power, k), level: power[k] };
+        }
+    }
+    return { lag: refine(power, peak), level: power[peak] };
 }
 
 /** Vertex of the parabola through power[k-1..k+1], in dB. */
@@ -403,8 +448,9 @@ export class Ranger {
         if (!this.floor.ready) {
             this.floor.update(profile.power);
         }
-        result.threshold = echoThreshold(this.floor.threshold(p.minExcess), p);
-        result.echo = findEcho(profile.power, result.threshold, p);
+        const clutter = this.floor.threshold(p.minExcess);
+        result.threshold = echoThreshold(clutter, p);
+        result.echo = findEcho(profile.power, result.threshold, p, clutter);
         this.floor.update(profile.power);
         if (result.echo) {
             result.distance =

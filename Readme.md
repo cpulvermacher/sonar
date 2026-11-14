@@ -5,7 +5,7 @@
 
 Measure distances with your phone's speaker and microphone.
 
-Just open
+Open
 [https://cpulvermacher.github.io/sonar](https://cpulvermacher.github.io/sonar)
 on your phone, press Start, allow microphone access and point it at a wall.
 
