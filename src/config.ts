@@ -50,12 +50,16 @@ export function maxChirpFrequency(sampleRate: number): number {
 /** Ping rates offered in the UI, in pings per second. */
 export const PING_RATES = [4, 10, 20, 30];
 
-/** Choices for nearPreferenceDb offered in the UI. */
-export const NEAR_PREFERENCES = [
-    { label: 'Nearest', db: 100 },
-    { label: 'Balanced', db: 6 },
-    { label: 'Clearest', db: 3 },
-];
+/**
+ * Which of several echoes is reported: strictly the nearest, or the nearest
+ * unless another is the better guess (see nearPreferenceDb, motionBonusDb).
+ */
+export const ECHO_CHOICES = {
+    balanced: 'Balanced',
+    nearest: 'Nearest',
+};
+
+export type EchoChoice = keyof typeof ECHO_CHOICES;
 
 export interface SonarConfig {
     band: BandId;
@@ -93,14 +97,22 @@ export interface SonarConfig {
     sensitivityDb: number;
     /** An echo must rise this much (dB) above the learned clutter floor. */
     minExcessDb: number;
+    echoChoice: EchoChoice;
     /**
-     * Of several echoes, the nearest is reported, unless it is close to the
-     * phone (where the phone's own response sets the detection threshold)
-     * and clears the threshold by this much (dB) less than an echo behind
-     * it does. A large value always reports the nearest; small values give
-     * up weak near echoes, such as a hand, for anything clearer behind.
+     * With echoChoice 'balanced': of several echoes, the nearest is
+     * reported, unless it is close to the phone (where the phone's own
+     * response sets the detection threshold) and clears the threshold by
+     * this much (dB) less than an echo behind it does. Small values give up
+     * weak near echoes, such as a hand, for anything clearer behind; 3 dB
+     * was tried and lost them too often.
      */
     nearPreferenceDb: number;
+    /**
+     * With echoChoice 'balanced': an echo whose distance has been changing
+     * counts as this much (dB) clearer, and is reported instead of one in
+     * front of it that stays put and is not clearer than that.
+     */
+    motionBonusDb: number;
 }
 
 export const DEFAULT_CONFIG: SonarConfig = {
@@ -116,5 +128,7 @@ export const DEFAULT_CONFIG: SonarConfig = {
     temperatureSigma: 2,
     sensitivityDb: -32,
     minExcessDb: 7,
+    echoChoice: 'balanced',
     nearPreferenceDb: 6,
+    motionBonusDb: 3,
 };

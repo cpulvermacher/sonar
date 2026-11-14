@@ -60,6 +60,14 @@ describe('wall at 50 cm', () => {
         const found = estimates(pings);
         expect(Math.max(...found) - Math.min(...found)).toBeLessThan(0.01);
     });
+
+    it('is fairly sure of having the right echo', () => {
+        // The other echoes are weaker ones behind the wall.
+        for (const p of pings.slice(1)) {
+            expect(p.confidence).toBeGreaterThan(0.85);
+            expect(p.peakError).toBeLessThan(0.06);
+        }
+    });
 });
 
 describe('wall at 20 cm', () => {
@@ -93,6 +101,14 @@ describe('hand held 20–30 cm in front, then taken away', () => {
         for (const p of pings.slice(5, 22)) {
             expect(p.estimate).toBeGreaterThan(0.26);
             expect(p.estimate).toBeLessThan(0.34);
+        }
+    });
+
+    it('is much less sure of the hand than of a wall', () => {
+        // A weak echo close to the phone, with the floor clearer behind it.
+        for (const p of pings.slice(5, 20)) {
+            expect(p.confidence).toBeLessThan(0.7);
+            expect(p.peakError).toBeGreaterThan(0.3);
         }
     });
 

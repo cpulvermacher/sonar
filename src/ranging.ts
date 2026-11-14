@@ -12,6 +12,7 @@
 
 import { chirpBand, type SonarConfig } from './config';
 import { argmax, MatchedFilter, median, nextPow2, speedOfSound } from './dsp';
+import { type Motion, type MotionOptions, MotionTracker } from './motion';
 
 export interface RangingParams {
     /** Metres of one-way distance per sample of round-trip delay. */
@@ -36,9 +37,15 @@ export interface RangingParams {
     minExcess: number;
     /** Minimum echo power at 0.5 m; scales with 1/distance². */
     sensitivity: number;
-    /** A nearer echo may be weaker than the clearest one by this power ratio, see findEcho. */
+    /**
+     * A nearer echo may be less clear than one behind it by this power
+     * ratio, see chooseEcho. Infinity: the nearest is always reported.
+     */
     nearPreference: number;
+    /** Power ratio by which a moving echo counts as clearer; 0: motion is not used. */
+    motionBonus: number;
     floor: FloorOptions;
+    motion: MotionOptions;
 }
 
 export interface FloorOptions {
@@ -58,7 +65,10 @@ export function rangingParams(
 ): RangingParams {
     const samples = (seconds: number) =>
         Math.max(1, Math.round(seconds * sampleRate));
+    const pings = (seconds: number) =>
+        Math.max(2, Math.round(seconds / config.interval));
     const metresPerSample = speedOfSound(config.temperature) / sampleRate / 2;
+    const balanced = config.echoChoice === 'balanced';
     return {
         metresPerSample,
         rangeOffset: config.rangeOffset,
@@ -74,7 +84,22 @@ export function rangingParams(
         minWidth: samples(0.06e-3),
         minExcess: fromDb(config.minExcessDb),
         sensitivity: fromDb(config.sensitivityDb),
-        nearPreference: fromDb(config.nearPreferenceDb),
+        nearPreference: balanced
+            ? fromDb(config.nearPreferenceDb)
+            : Number.POSITIVE_INFINITY,
+        motionBonus: balanced ? fromDb(config.motionBonusDb) : 0,
+        motion: {
+            // As far as the DistanceTracker follows from ping to ping.
+            gate: (0.04 + 1.5 * config.interval) / metresPerSample,
+            // Half a second, but four positions at least: fewer do not
+            // tell a steady shift from jitter.
+            window: Math.max(3, pings(0.5)),
+            // More than a hand trembles, or a ragged echo jitters.
+            minMove: 0.02 / metresPerSample,
+            // Stopping does not make an echo the wrong one.
+            hold: pings(2),
+            maxGap: pings(0.3),
+        },
         floor: {
             // Covers the jitter of the direct path's position.
             dilate: samples(0.05e-3),
@@ -222,6 +247,26 @@ export interface Echo {
     lag: number;
     /** Its power relative to the direct cluster. */
     level: number;
+    /** How uncertain it is that this is the right one of several echoes. */
+    ambiguity: PeakAmbiguity;
+}
+
+/**
+ * The uncertainty about which echo is the right one. Every other candidate
+ * is given odds of being the right one instead; from those follow the
+ * probability that the reported echo is right, and the error to expect from
+ * having picked the wrong one: the distances to the others, weighted with
+ * their probabilities. Lengths are in lags here, and in m in a PingResult.
+ */
+export interface PeakAmbiguity {
+    /** Probability that the reported echo is the right one. */
+    confidence: number;
+    /** Expected error towards the phone (the right echo is a nearer one). */
+    nearer: number;
+    /** Expected error away from the phone. */
+    farther: number;
+    /** Position of the most likely other echo, if there is any. */
+    rival: number | null;
 }
 
 /**
@@ -240,43 +285,34 @@ export function echoThreshold(
     return out;
 }
 
-/** A stretch of the profile above the threshold. */
-interface Candidate {
-    start: number;
-    /** Lag of its highest power. */
-    peak: number;
+/** A stretch of the profile above the threshold: possibly the echo. */
+export interface Candidate {
+    /** Position of the echo in it (fractional lag) and its power. */
+    lag: number;
+    level: number;
     /** Largest ratio of power to threshold in it. */
     margin: number;
     /** Whether the threshold there is set by the clutter. */
     inClutter: boolean;
+    /** Whether its distance has been changing, see MotionTracker. */
+    motion: Motion;
 }
 
 /**
- * The echo to report, a balance between the nearest and the clearest one.
- * Every stretch of the profile above the threshold is a candidate; how far
- * it rises above the threshold is its margin. The nearest candidate wins,
- * with one exception: where the threshold is set by the clutter (close to
- * the phone), a candidate is passed over if its margin is less than
- * 1/nearPreference of that of a candidate behind it. Something that barely
- * clears the clutter in front of a clear echo is more likely a fluctuation
- * of the phone's own response than the thing being measured.
- *
- * Further out, where the threshold is the sensitivity curve, the nearest
- * always wins: there the alternatives are things like the ceiling, which
- * are often clearer than a distant wall and would win too easily.
- *
- * Within a stretch, the echo is at the first local maximum that is not
- * just a foothill (at least half the power of the stretch's maximum).
+ * The candidates for the echo, nearest first: every stretch of the profile
+ * above the threshold. How far it rises above the threshold is its margin.
+ * Within a stretch, the echo is at the first local maximum that is not just
+ * a foothill (at least half the power of the stretch's maximum).
  *
  * @param clutter the clutter part of the threshold, see echoThreshold; by
  *   default all of the threshold counts as clutter
  */
-export function findEcho(
+export function findCandidates(
     power: Float32Array,
     threshold: Float32Array,
     p: RangingParams,
     clutter: Float32Array = threshold
-): Echo | null {
+): Candidate[] {
     const end = Math.min(p.maxLag, power.length - 1);
     const candidates: Candidate[] = [];
     let l = p.minLag;
@@ -285,42 +321,190 @@ export function findEcho(
             l++;
             continue;
         }
-        const c = { start: l, peak: l, margin: 0, inClutter: false };
+        const start = l;
+        let peak = l;
+        let margin = 0;
+        let inClutter = false;
         while (l <= end && power[l] >= threshold[l]) {
-            if (power[l] > power[c.peak]) {
-                c.peak = l;
+            if (power[l] > power[peak]) {
+                peak = l;
             }
-            if (power[l] > c.margin * threshold[l]) {
-                c.margin = power[l] / threshold[l];
-                c.inClutter = clutter[l] >= threshold[l];
+            if (power[l] > margin * threshold[l]) {
+                margin = power[l] / threshold[l];
+                inClutter = clutter[l] >= threshold[l];
             }
             l++;
         }
-        if (l - c.start >= p.minWidth) {
-            candidates.push(c);
+        if (l - start < p.minWidth) {
+            continue;
         }
+        let at = peak;
+        for (let k = start; k < peak; k++) {
+            const isMax =
+                power[k] >= power[Math.max(0, k - 1)] &&
+                power[k] > power[k + 1];
+            if (isMax && power[k] >= 0.5 * power[peak]) {
+                at = k;
+                break;
+            }
+        }
+        candidates.push({
+            lag: refine(power, at),
+            level: power[at],
+            margin,
+            inClutter,
+            motion: 'unknown',
+        });
     }
-    // The clearest of the candidates behind each one.
+    return candidates;
+}
+
+/**
+ * For the ambiguity only: how much clearer (power ratio) an echo behind the
+ * reported one would have to be to count as equally likely, where the
+ * choice itself always goes to the nearer one. There is always something
+ * behind the nearest thing (the floor, the ceiling), so what is behind is
+ * an unlikely answer unless the reported echo is weak.
+ */
+const FAR_PREFERENCE = 10 ** 1.2;
+
+/**
+ * The nearest of the candidates `among` (indices, nearest first), with one
+ * exception: where the threshold is set by the clutter (close to the
+ * phone), a candidate is passed over if one behind it is more than
+ * nearPreference clearer. Something that barely clears the clutter in front
+ * of a clear echo is more likely a fluctuation of the phone's own response
+ * than the thing being measured.
+ *
+ * Further out the nearest always wins: there the alternatives are things
+ * like the ceiling, which are often clearer than a distant wall and would
+ * win too easily.
+ */
+function nearestClear(
+    candidates: Candidate[],
+    among: number[],
+    p: RangingParams
+): number {
+    let chosen = -1;
     let behind = 0;
-    let chosen: Candidate | null = null;
-    for (const c of candidates.reverse()) {
+    for (let k = among.length - 1; k >= 0; k--) {
+        const c = candidates[among[k]];
         if (!c.inClutter || c.margin * p.nearPreference >= behind) {
-            chosen = c;
+            chosen = among[k];
         }
         behind = Math.max(behind, c.margin);
     }
-    if (!chosen) {
+    return chosen;
+}
+
+/**
+ * For the ambiguity: how much clearer (power ratio) the candidate `other`
+ * would have to be to be as good a guess as `c`: by the handicap of being
+ * behind it, or the advantage of being in front, and by that of moving
+ * when the other does not.
+ */
+function handicap(c: Candidate, other: Candidate, p: RangingParams): number {
+    const nearer = other.lag > c.lag ? c : other;
+    const preference = nearer.inClutter
+        ? Math.min(p.nearPreference, FAR_PREFERENCE)
+        : FAR_PREFERENCE;
+    const position = nearer === c ? preference : 1 / preference;
+    const motion =
+        c.motion === 'moving' && other.motion === 'still'
+            ? p.motionBonus
+            : c.motion === 'still' && other.motion === 'moving'
+              ? 1 / p.motionBonus
+              : 1;
+    return position * motion;
+}
+
+/**
+ * The echo to report, a balance between the nearest and the best guess: see
+ * nearestClear, which decides unless motion says otherwise. If that
+ * candidate is known to stay put while others move, the one that nearestClear picks
+ * among the moving ones is reported instead, unless it is less clear by
+ * more than motionBonus: what moves is what the phone is being moved
+ * against, or what is being moved in front of it.
+ *
+ * The ambiguity of the choice follows from how narrowly it was made: a
+ * candidate that would have been as good a guess had it been clearer by
+ * some factor has odds of one in that factor of being the right one after
+ * all. For this only, an echo further out counts as a worse guess by
+ * FAR_PREFERENCE, where the choice itself always goes to the nearer one.
+ */
+export function chooseEcho(
+    candidates: Candidate[],
+    p: RangingParams
+): Echo | null {
+    const n = candidates.length;
+    const all = candidates.map((_, i) => i);
+    let chosen = nearestClear(candidates, all, p);
+    if (chosen < 0) {
         return null;
     }
-    const { start, peak } = chosen;
-    for (let k = start; k < peak; k++) {
-        const isMax =
-            power[k] >= power[Math.max(0, k - 1)] && power[k] > power[k + 1];
-        if (isMax && power[k] >= 0.5 * power[peak]) {
-            return { lag: refine(power, k), level: power[k] };
+    if (p.motionBonus > 0 && candidates[chosen].motion === 'still') {
+        const mover = nearestClear(
+            candidates,
+            all.filter((i) => candidates[i].motion === 'moving'),
+            p
+        );
+        // (One in front was passed over in the clutter, and still has the
+        // benefit of being nearer.)
+        const benefit = p.motionBonus * (mover < chosen ? p.nearPreference : 1);
+        if (
+            mover >= 0 &&
+            candidates[mover].margin * benefit >= candidates[chosen].margin
+        ) {
+            chosen = mover;
         }
     }
-    return { lag: refine(power, peak), level: power[peak] };
+
+    const c = candidates[chosen];
+    let total = 1;
+    let nearer = 0;
+    let farther = 0;
+    let rival: number | null = null;
+    let rivalOdds = 0;
+    for (let i = 0; i < n; i++) {
+        if (i === chosen) {
+            continue;
+        }
+        const other = candidates[i];
+        const odds = Math.min(
+            1,
+            other.margin / (c.margin * handicap(c, other, p))
+        );
+        total += odds;
+        if (i < chosen) {
+            nearer += odds * (c.lag - other.lag);
+        } else {
+            farther += odds * (other.lag - c.lag);
+        }
+        if (odds > rivalOdds) {
+            rivalOdds = odds;
+            rival = other.lag;
+        }
+    }
+    return {
+        lag: c.lag,
+        level: c.level,
+        ambiguity: {
+            confidence: 1 / total,
+            nearer: nearer / total,
+            farther: farther / total,
+            rival,
+        },
+    };
+}
+
+/** The echo in one profile on its own, see findCandidates and chooseEcho. */
+export function findEcho(
+    power: Float32Array,
+    threshold: Float32Array,
+    p: RangingParams,
+    clutter: Float32Array = threshold
+): Echo | null {
+    return chooseEcho(findCandidates(power, threshold, p, clutter), p);
 }
 
 /** Vertex of the parabola through power[k-1..k+1], in dB. */
@@ -358,6 +542,8 @@ export interface PingResult {
     echo: Echo | null;
     /** Distance of the echo in m, including the range offset. */
     distance: number | null;
+    /** The echo's ambiguity, with lengths in m and the rival as a distance. */
+    ambiguity: PeakAmbiguity | null;
 }
 
 /** Direct path amplitudes remembered for the plausibility check. */
@@ -376,6 +562,7 @@ export class Ranger {
     /** Matched filters by FFT size. */
     private readonly filters = new Map<number, MatchedFilter>();
     private readonly floor: ClutterFloor;
+    private readonly motion: MotionTracker;
     /** Highpass cutoff in cycles per sample. */
     private readonly highpass: number;
     private amplitudes: number[] = [];
@@ -384,6 +571,7 @@ export class Ranger {
         this.params = rangingParams(sampleRate, config);
         this.chirp = chirp;
         this.floor = new ClutterFloor(this.params.floor);
+        this.motion = new MotionTracker(this.params.motion);
         this.highpass = (HIGHPASS_RATIO * chirpBand(config).f0) / sampleRate;
     }
 
@@ -424,7 +612,10 @@ export class Ranger {
             lagOffset: profile.origin - profile.direct,
             echo: null,
             distance: null,
+            ambiguity: null,
         };
+        const toMetres = (lag: number) =>
+            (lag + result.lagOffset) * p.metresPerSample + p.rangeOffset;
 
         if (acquiring) {
             const peak = pw[Math.round(profile.direct)] ?? 0;
@@ -437,6 +628,7 @@ export class Ranger {
             this.amplitudes.length >= 3 &&
             profile.amplitude < MIN_AMPLITUDE_RATIO * median(this.amplitudes)
         ) {
+            this.motion.skip();
             return result;
         }
         this.amplitudes.push(profile.amplitude);
@@ -450,12 +642,32 @@ export class Ranger {
         }
         const clutter = this.floor.threshold(p.minExcess);
         result.threshold = echoThreshold(clutter, p);
-        result.echo = findEcho(profile.power, result.threshold, p, clutter);
+        const candidates = findCandidates(
+            profile.power,
+            result.threshold,
+            p,
+            clutter
+        );
+        if (p.motionBonus > 0) {
+            const motion = this.motion.update(
+                candidates.map((c) => c.lag + result.lagOffset)
+            );
+            candidates.forEach((c, i) => {
+                c.motion = motion[i];
+            });
+        }
+        result.echo = chooseEcho(candidates, p);
         this.floor.update(profile.power);
         if (result.echo) {
-            result.distance =
-                (result.echo.lag + result.lagOffset) * p.metresPerSample +
-                p.rangeOffset;
+            const { lag, ambiguity } = result.echo;
+            result.distance = toMetres(lag);
+            result.ambiguity = {
+                confidence: ambiguity.confidence,
+                nearer: ambiguity.nearer * p.metresPerSample,
+                farther: ambiguity.farther * p.metresPerSample,
+                rival:
+                    ambiguity.rival === null ? null : toMetres(ambiguity.rival),
+            };
         }
         return result;
     }

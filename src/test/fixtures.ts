@@ -59,6 +59,10 @@ export interface ReplayedPing {
     distance: number | null;
     /** The tracked distance after this ping, if any. */
     estimate: number | null;
+    /** Probability that the tracked echo is the right one, if any. */
+    confidence: number | null;
+    /** Error (m) expected from tracking the wrong echo, if any. */
+    peakError: number | null;
     /** Arrival of the direct path relative to the ping's emitFrame. */
     delay: number;
 }
@@ -78,8 +82,15 @@ export function replay(fixture: Fixture): ReplayedPing[] {
         const window = analyser.window(ping.emitFrame);
         const x = sliceRecorded(ping, window.start, window.length);
         const result = analyser.process(ping.emitFrame, window, x);
-        const estimate = tracker.push(result.valid ? result.distance : null);
+        const estimate = tracker.push(
+            result.valid ? result.distance : null,
+            result.ambiguity ?? undefined
+        );
         return {
+            confidence: estimate?.peak.confidence ?? null,
+            peakError: estimate
+                ? estimate.peak.nearer + estimate.peak.farther
+                : null,
             pingId: ping.pingId,
             valid: result.valid,
             distance: result.valid ? result.distance : null,

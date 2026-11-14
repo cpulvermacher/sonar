@@ -13,6 +13,48 @@ function feed(tracker: DistanceTracker, values: (number | null)[]) {
     return estimate;
 }
 
+describe('peak ambiguity', () => {
+    const sure = { confidence: 1, nearer: 0, farther: 0, rival: null };
+    const unsure = { confidence: 0.6, nearer: 0.02, farther: 0.3, rival: 1.2 };
+
+    it('is that of the pings, averaged', () => {
+        const tracker = make();
+        tracker.push(0.5, sure);
+        expect(tracker.push(0.5, sure)?.peak).toEqual(sure);
+        const first = tracker.push(0.5, unsure)?.peak;
+        expect(first?.farther).toBeGreaterThan(0);
+        expect(first?.farther).toBeLessThan(0.1);
+        expect(first?.rival).toBe(1.2);
+        let last = first;
+        for (let k = 0; k < 40; k++) {
+            last = tracker.push(0.5, unsure)?.peak;
+        }
+        expect(last?.confidence).toBeCloseTo(0.6, 3);
+        expect(last?.nearer).toBeCloseTo(0.02, 3);
+        expect(last?.farther).toBeCloseTo(0.3, 3);
+    });
+
+    it('counts a ping that reports another distance as a wrong pick', () => {
+        const tracker = make();
+        feed(tracker, [0.5, 0.5]);
+        // Each ping is sure of itself, but they do not agree.
+        const peak = tracker.push(1.1, sure)?.peak;
+        expect(peak?.confidence).toBeLessThan(0.9);
+        expect(peak?.farther).toBeGreaterThan(0.05);
+        expect(peak?.nearer).toBe(0);
+        expect(peak?.rival).toBe(1.1);
+        const back = tracker.push(0.2, sure)?.peak;
+        expect(back?.nearer).toBeGreaterThan(0.03);
+    });
+
+    it('starts afresh when the track jumps', () => {
+        const tracker = make();
+        feed(tracker, [0.5, 0.5]);
+        tracker.push(1.1, sure);
+        expect(tracker.push(1.1, sure)?.peak).toEqual(sure);
+    });
+});
+
 describe('DistanceTracker', () => {
     it('reports nothing until two pings agree', () => {
         const tracker = make();

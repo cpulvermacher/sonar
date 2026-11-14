@@ -3,6 +3,15 @@
 // (lightly when they move, more when they only jitter), a jump is followed
 // once a second ping confirms it, and single outliers are ignored.
 
+import type { PeakAmbiguity } from './ranging';
+
+const UNAMBIGUOUS: PeakAmbiguity = {
+    confidence: 1,
+    nearer: 0,
+    farther: 0,
+    rival: null,
+};
+
 export interface Estimate {
     /** Tracked distance in m. */
     distance: number;
@@ -11,6 +20,13 @@ export interface Estimate {
     /** Components of sigma: scatter between pings, speed of sound. */
     sigmaStat: number;
     sigmaSound: number;
+    /**
+     * A second, separate uncertainty: sigma assumes that the right echo is
+     * being followed, this is about whether it is. Averaged over the recent
+     * pings; a ping that reported some other distance counts as a wrong
+     * pick at that distance.
+     */
+    peak: PeakAmbiguity;
 }
 
 export interface TrackerOptions {
@@ -34,6 +50,8 @@ const CONFIRM = 2;
 const HOLD_SECONDS = 0.3;
 /** Smoothing factor of the scatter estimate. */
 const SCATTER_ALPHA = 0.2;
+/** The peak ambiguity is averaged over about this long (s). */
+const AMBIGUITY_SECONDS = 0.25;
 
 export class DistanceTracker {
     private readonly options: TrackerOptions;
@@ -45,9 +63,12 @@ export class DistanceTracker {
     private pending: number[] = [];
     /** Running mean square of the measurements' deviation from the updated track. */
     private scatter = 0;
+    private peak = UNAMBIGUOUS;
+    private readonly peakAlpha: number;
 
     constructor(options: TrackerOptions) {
         this.options = options;
+        this.peakAlpha = 1 - Math.exp(-options.interval / AMBIGUITY_SECONDS);
         this.gate = BASE_GATE + (options.maxSpeed ?? 1.5) * options.interval;
         this.maxMisses = Math.max(
             2,
@@ -60,10 +81,31 @@ export class DistanceTracker {
         this.misses = 0;
         this.pending = [];
         this.scatter = 0;
+        this.peak = UNAMBIGUOUS;
     }
 
-    /** Takes the measurement of one ping (null: no echo) and returns the new estimate. */
-    push(distance: number | null): Estimate | null {
+    /** Moves the averaged peak ambiguity towards that of one ping. */
+    private blendPeak(ping: PeakAmbiguity): void {
+        const a = this.peakAlpha;
+        const mix = (old: number, now: number) => old + a * (now - old);
+        this.peak = {
+            confidence: mix(this.peak.confidence, ping.confidence),
+            nearer: mix(this.peak.nearer, ping.nearer),
+            farther: mix(this.peak.farther, ping.farther),
+            rival: ping.rival,
+        };
+    }
+
+    /**
+     * Takes the measurement of one ping (null: no echo) and returns the new
+     * estimate.
+     *
+     * @param ambiguity how sure the ping is of having picked the right echo
+     */
+    push(
+        distance: number | null,
+        ambiguity: PeakAmbiguity = UNAMBIGUOUS
+    ): Estimate | null {
         if (distance === null) {
             this.miss();
         } else if (
@@ -81,6 +123,7 @@ export class DistanceTracker {
             this.scatter += SCATTER_ALPHA * (rest * rest - this.scatter);
             this.misses = 0;
             this.pending = [];
+            this.blendPeak(ambiguity);
         } else {
             this.pending = this.pending.filter(
                 (d) => Math.abs(d - distance) <= this.gate
@@ -93,7 +136,18 @@ export class DistanceTracker {
                 this.scatter = 0;
                 this.misses = 0;
                 this.pending = [];
+                this.peak = ambiguity;
             } else {
+                if (this.track !== null) {
+                    // Either this ping or the track has the wrong echo.
+                    const off = distance - this.track;
+                    this.blendPeak({
+                        confidence: 0,
+                        nearer: Math.max(0, -off),
+                        farther: Math.max(0, off),
+                        rival: distance,
+                    });
+                }
                 this.miss();
             }
         }
@@ -118,6 +172,7 @@ export class DistanceTracker {
             sigma: Math.hypot(sigmaStat, sigmaSound),
             sigmaStat,
             sigmaSound,
+            peak: this.peak,
         };
     }
 }

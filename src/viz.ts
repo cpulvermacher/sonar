@@ -371,14 +371,22 @@ export class SonarView {
             el.sigma.textContent = '';
         } else {
             el.distance.textContent = `${est.distance.toFixed(2)} m`;
-            el.sigma.textContent = `± ${cm(est.sigma)}`;
+            // Two separate uncertainties: of the echo's position, and of
+            // this being the right echo at all.
+            el.sigma.textContent =
+                `± ${cm(est.sigma)} · peak ` +
+                `+${cm(est.peak.farther)} −${cm(est.peak.nearer)}`;
         }
         const parts: string[] = [];
         if (est) {
             parts.push(
                 `scatter ${cm(est.sigmaStat)}`,
-                `sound speed ${cm(est.sigmaSound)}`
+                `sound speed ${cm(est.sigmaSound)}`,
+                `right peak ${(100 * est.peak.confidence).toFixed(0)} %`
             );
+            if (est.peak.rival !== null && est.peak.confidence < 0.995) {
+                parts.push(`else ${est.peak.rival.toFixed(2)} m`);
+            }
         }
         if (!ping.valid) {
             parts.push('ping not heard');

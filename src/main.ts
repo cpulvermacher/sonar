@@ -9,7 +9,8 @@ import {
     type BandId,
     chirpBand,
     DEFAULT_CONFIG,
-    NEAR_PREFERENCES,
+    ECHO_CHOICES,
+    type EchoChoice,
     PING_RATES,
     type SonarConfig,
 } from './config';
@@ -55,7 +56,7 @@ el('version').textContent =
 
 type Settings = Pick<
     SonarConfig,
-    'band' | 'frequencyScale' | 'interval' | 'rangeOffset' | 'nearPreferenceDb'
+    'band' | 'frequencyScale' | 'interval' | 'rangeOffset' | 'echoChoice'
 >;
 
 function viewOptions(config: SonarConfig, sampleRate: number): ViewOptions {
@@ -114,10 +115,10 @@ for (const rate of PING_RATES) {
 }
 rateSelect.value = String(Math.round(1 / DEFAULT_CONFIG.interval));
 offsetInput.value = String(DEFAULT_CONFIG.rangeOffset * 100);
-for (const { label, db } of NEAR_PREFERENCES) {
-    preferSelect.add(new Option(label, String(db)));
+for (const [id, label] of Object.entries(ECHO_CHOICES)) {
+    preferSelect.add(new Option(label, id));
 }
-preferSelect.value = String(DEFAULT_CONFIG.nearPreferenceDb);
+preferSelect.value = DEFAULT_CONFIG.echoChoice;
 try {
     const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? 'null');
     if (saved && saved.band in BANDS) {
@@ -126,8 +127,8 @@ try {
         rateSelect.value = String(Math.round(1 / saved.interval));
         offsetInput.value = String(saved.rangeOffset * 100);
         // Missing in settings saved before this choice existed.
-        if (NEAR_PREFERENCES.some((p) => p.db === saved.nearPreferenceDb)) {
-            preferSelect.value = String(saved.nearPreferenceDb);
+        if (saved.echoChoice in ECHO_CHOICES) {
+            preferSelect.value = saved.echoChoice;
         }
     }
 } catch {
@@ -147,7 +148,7 @@ function readSettings(): Settings | null {
         frequencyScale,
         interval: 1 / rate,
         rangeOffset: offset / 100,
-        nearPreferenceDb: Number(preferSelect.value),
+        echoChoice: preferSelect.value as EchoChoice,
     };
 }
 
@@ -197,7 +198,10 @@ function onWorkerMessage(msg: FromWorker) {
         case 'echo': {
             const fs = session.ctx.sampleRate;
             // A ping that was not heard counts as one without an echo.
-            const estimate = tracker.push(msg.valid ? msg.distance : null);
+            const estimate = tracker.push(
+                msg.valid ? msg.distance : null,
+                msg.ambiguity ?? undefined
+            );
             recorder.push({
                 pingId: msg.pingId,
                 emitFrame: msg.emitFrame,

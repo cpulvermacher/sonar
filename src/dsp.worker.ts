@@ -89,6 +89,7 @@ function processPending() {
                 valid: result.valid,
                 latency: result.latency,
                 distance: result.distance,
+                ambiguity: result.ambiguity,
                 level: result.echo?.level ?? null,
                 power: result.power,
                 threshold: result.threshold,

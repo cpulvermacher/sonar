@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG } from '../config';
 import { makeChirp } from '../dsp';
 import {
+    type Candidate,
     ClutterFloor,
+    chooseEcho,
     echoThreshold,
     findEcho,
     Ranger,
@@ -180,17 +182,15 @@ describe('findEcho', () => {
         );
     });
 
-    it('can be set to always take the nearest or the clearest', () => {
+    it('can be set to always take the nearest', () => {
         const power = flat();
         bump(power, 200, 7);
         bump(power, 300, 500);
         bump(power, 400, 400);
-        const pick = (nearPreference: number) =>
-            findEcho(power, threshold, { ...params, nearPreference })?.lag;
-        expect(pick(1e10)).toBeCloseTo(200, 0);
-        expect(pick(1)).toBeCloseTo(300, 0);
-        // Of the two clear ones, still the nearer.
-        expect(pick(2)).toBeCloseTo(300, 0);
+        const nearest = rangingParams(fs, { ...config, echoChoice: 'nearest' });
+        expect(findEcho(power, threshold, nearest)?.lag).toBeCloseTo(200, 0);
+        // Otherwise, of the two clear ones, still the nearer.
+        expect(findEcho(power, threshold, params)?.lag).toBeCloseTo(300, 0);
     });
 
     it('ignores what is too close or too far', () => {
@@ -219,6 +219,153 @@ describe('findEcho', () => {
         bump(twin, 200, 60, 10);
         bump(twin, 212, 100, 10);
         expect(findEcho(twin, threshold, params)?.lag).toBeCloseTo(200, 0);
+    });
+});
+
+describe('chooseEcho', () => {
+    const candidate = (
+        lag: number,
+        marginDb: number,
+        motion: Candidate['motion'] = 'unknown',
+        inClutter = false
+    ): Candidate => ({
+        lag,
+        level: 1,
+        margin: 10 ** (marginDb / 10),
+        inClutter,
+        motion,
+    });
+
+    it('prefers a moving echo to a slightly clearer one that stays put', () => {
+        const pick = (nearDb: number) =>
+            chooseEcho(
+                [candidate(200, nearDb, 'still'), candidate(300, 8, 'moving')],
+                params
+            )?.lag;
+        expect(pick(10)).toBe(300);
+        // Not to one that is clearer by more than motionBonusDb (3 dB).
+        expect(pick(12)).toBe(200);
+    });
+
+    it('needs to know that the nearer echo stays put', () => {
+        // It has only just appeared: that may be the thing moving in.
+        const echo = chooseEcho(
+            [candidate(200, 10, 'unknown'), candidate(300, 8, 'moving')],
+            params
+        );
+        expect(echo?.lag).toBe(200);
+    });
+
+    it('takes the nearest of the moving echoes', () => {
+        const echo = chooseEcho(
+            [
+                candidate(200, 6, 'still'),
+                candidate(300, 5, 'moving'),
+                candidate(400, 15, 'moving'),
+            ],
+            params
+        );
+        expect(echo?.lag).toBe(300);
+    });
+
+    it('does not let a faint moving echo replace a clear one', () => {
+        const echo = chooseEcho(
+            [
+                candidate(200, 6, 'still'),
+                candidate(300, 0.5, 'moving'),
+                candidate(400, 15, 'moving'),
+            ],
+            params
+        );
+        expect(echo?.lag).toBe(200);
+    });
+
+    it('keeps a weak echo in the clutter that moves', () => {
+        // Passed over while it stays put, like a fluctuation of the
+        // phone's own response; a hand that moves is not one.
+        const pick = (motion: Candidate['motion']) =>
+            chooseEcho(
+                [candidate(100, 2, motion, true), candidate(300, 10, 'still')],
+                params
+            )?.lag;
+        expect(pick('still')).toBe(300);
+        expect(pick('moving')).toBe(100);
+    });
+
+    it('ignores motion when set to the nearest', () => {
+        const nearest = rangingParams(fs, { ...config, echoChoice: 'nearest' });
+        const echo = chooseEcho(
+            [candidate(200, 3, 'still'), candidate(300, 20, 'moving')],
+            nearest
+        );
+        expect(echo?.lag).toBe(200);
+    });
+
+    describe('ambiguity', () => {
+        it('is none for a single echo', () => {
+            const echo = chooseEcho([candidate(200, 10)], params);
+            expect(echo?.ambiguity).toEqual({
+                confidence: 1,
+                nearer: 0,
+                farther: 0,
+                rival: null,
+            });
+        });
+
+        it('is small with a much weaker echo behind', () => {
+            const echo = chooseEcho(
+                [candidate(200, 20), candidate(300, 2)],
+                params
+            );
+            expect(echo?.ambiguity.confidence).toBeGreaterThan(0.99);
+            expect(echo?.ambiguity.farther).toBeLessThan(1);
+        });
+
+        it('grows as the echo behind gets clearer', () => {
+            const farther = (db: number) =>
+                chooseEcho([candidate(200, 5), candidate(300, db)], params)
+                    ?.ambiguity.farther as number;
+            expect(farther(10)).toBeGreaterThan(farther(5));
+            expect(farther(15)).toBeGreaterThan(farther(10));
+            // The nearer one is still reported, but is no better a guess:
+            // even odds, so half of the 100 lags between them.
+            const echo = chooseEcho(
+                [candidate(200, 5), candidate(300, 30)],
+                params
+            );
+            expect(echo?.lag).toBe(200);
+            expect(echo?.ambiguity.confidence).toBeCloseTo(0.5, 9);
+            expect(echo?.ambiguity.farther).toBeCloseTo(50, 9);
+            expect(echo?.ambiguity.nearer).toBe(0);
+            expect(echo?.ambiguity.rival).toBe(300);
+        });
+
+        it('counts an echo that was passed over as an error towards the phone', () => {
+            // 7 dB weaker, with 6 dB allowed: passed over by 1 dB.
+            const echo = chooseEcho(
+                [candidate(100, 3, 'unknown', true), candidate(300, 10)],
+                params
+            );
+            expect(echo?.lag).toBe(300);
+            const odds = 10 ** -0.1;
+            expect(echo?.ambiguity.confidence).toBeCloseTo(1 / (1 + odds), 6);
+            expect(echo?.ambiguity.nearer).toBeCloseTo(
+                (200 * odds) / (1 + odds),
+                4
+            );
+            expect(echo?.ambiguity.farther).toBe(0);
+        });
+
+        it('is larger when the choice went against a clearer echo for its motion', () => {
+            const confidence = (motion: Candidate['motion']) =>
+                chooseEcho(
+                    [candidate(200, 9, 'still'), candidate(300, 8, motion)],
+                    params
+                )?.ambiguity.confidence as number;
+            // 200 is reported and likely right, or 300 is and 200 a rival.
+            expect(confidence('still')).toBeGreaterThan(0.9);
+            expect(confidence('moving')).toBeLessThan(0.6);
+        });
     });
 });
 

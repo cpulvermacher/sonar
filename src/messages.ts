@@ -1,6 +1,7 @@
 // Message types shared between the main thread, the capture worklet and the DSP worker.
 
 import type { SonarConfig } from './config';
+import type { PeakAmbiguity } from './ranging';
 
 /** Worklet -> worker: a batch of consecutive mic samples. */
 export interface CaptureBlock {
@@ -40,6 +41,8 @@ export interface EchoMessage {
     latency: number | null;
     /** Distance of the echo in m, if there is one. */
     distance: number | null;
+    /** How uncertain it is that this is the right one of several echoes. */
+    ambiguity: PeakAmbiguity | null;
     /** Power of the echo relative to the direct path. */
     level: number | null;
     /** Smoothed power relative to the direct path; power[l] is at lag l + lagOffset. */
