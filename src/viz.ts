@@ -187,6 +187,7 @@ export interface ViewElements {
     distance: HTMLElement;
     sigma: HTMLElement;
     details: HTMLElement;
+    pingStats: HTMLElement;
     ascan: HTMLCanvasElement;
     ascanTip: HTMLElement;
     echogram: HTMLCanvasElement;
@@ -364,6 +365,7 @@ export class SonarView {
             el.distance.textContent = '—';
             el.sigma.textContent = '';
             el.details.textContent = '';
+            el.pingStats.textContent = '';
             return;
         }
         if (!est) {
@@ -377,11 +379,12 @@ export class SonarView {
                 `± ${cm(est.sigma)} · peak ` +
                 `+${cm(est.peak.farther)} −${cm(est.peak.nearer)}`;
         }
+        // The top bar keeps only what qualifies the reading itself: how sure
+        // it is the right echo, and whether the latest ping was heard at all
+        // (otherwise the reading is stale). The rest goes under the A-scan.
         const parts: string[] = [];
         if (est) {
             parts.push(
-                `scatter ${cm(est.sigmaStat)}`,
-                `sound speed ${cm(est.sigmaSound)}`,
                 `right peak ${(100 * est.peak.confidence).toFixed(0)} %`
             );
             if (est.peak.rival !== null && est.peak.confidence < 0.995) {
@@ -390,18 +393,27 @@ export class SonarView {
         }
         if (!ping.valid) {
             parts.push('ping not heard');
-        } else if (ping.levelDb === null) {
-            parts.push('no echo this ping');
-        } else {
-            parts.push(`echo ${ping.levelDb.toFixed(1)} dB`);
-        }
-        if (ping.latencyMs !== null) {
-            parts.push(`audio latency ${ping.latencyMs.toFixed(0)} ms`);
-        }
-        if (ping.heading !== null) {
-            parts.push(`heading ${ping.heading.toFixed(0)}°`);
         }
         el.details.textContent = parts.join(' · ');
+
+        const stats: string[] = [];
+        if (ping.valid) {
+            stats.push(
+                ping.levelDb === null
+                    ? 'no echo this ping'
+                    : `echo ${ping.levelDb.toFixed(1)} dB`
+            );
+        }
+        if (est) {
+            stats.push(
+                `± from scatter ${cm(est.sigmaStat)}, ` +
+                    `sound speed ${cm(est.sigmaSound)}`
+            );
+        }
+        if (ping.latencyMs !== null) {
+            stats.push(`audio latency ${ping.latencyMs.toFixed(0)} ms`);
+        }
+        el.pingStats.textContent = stats.join(' · ');
     }
 
     // --- Canvas -------------------------------------------------------------

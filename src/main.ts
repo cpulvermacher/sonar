@@ -86,6 +86,7 @@ const view = new SonarView(viewOptions(config, 48000), {
     distance: el('distance'),
     sigma: el('sigma'),
     details: el('details'),
+    pingStats: el('ping-stats'),
     ascan: el('ascan'),
     ascanTip: el('ascan-tip'),
     echogram: el('echogram'),

@@ -228,6 +228,17 @@ input:disabled {
     margin: 0 0 8px;
 }
 
+.chart .stats {
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    margin: 8px 0 0;
+}
+
+.chart .stats:empty {
+    display: none;
+}
+
 .legend {
     display: flex;
     gap: 16px;
