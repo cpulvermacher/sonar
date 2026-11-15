@@ -1,5 +1,5 @@
-// Rendering: distance readout, A-scan of the latest ping, echogram history,
-// and a map by compass direction. Plain Canvas 2D, colours from CSS tokens.
+// Rendering: distance readout, A-scan of the latest ping and echogram
+// history. Plain Canvas 2D, colours from CSS tokens.
 
 import type { Estimate } from './tracker';
 
@@ -17,8 +17,6 @@ export interface PingView {
     levelDb: number | null;
     latencyMs: number | null;
     estimate: Estimate | null;
-    /** Direction the phone points in, degrees clockwise, if known. */
-    heading: number | null;
 }
 
 export interface ViewOptions {
@@ -38,10 +36,6 @@ const DB_FLOOR = -60;
 /** Pings kept in the echogram, and distance rows per ping. */
 const HISTORY = 240;
 const ROWS = 200;
-/** Width of a direction bin of the map, in degrees. */
-const MAP_BIN = 3;
-/** Width and height of the map's intensity image, in pixels. */
-const MAP_PIXELS = 2 * ROWS;
 const MARGIN = { left: 48, right: 12, top: 20, bottom: 28 };
 const FONT = '12px system-ui, -apple-system, "Segoe UI", sans-serif';
 
@@ -61,14 +55,6 @@ interface Column {
     pingId: number;
     /** dB per distance row (row 0 = nearest), NaN where there is no data. */
     rows: Float32Array;
-    estimate: number | null;
-}
-
-/** The last ping heard in one direction. */
-interface MapSector {
-    /** dB per distance row, as in Column. */
-    rows: Float32Array;
-    /** The distance estimate at the time, if any. */
     estimate: number | null;
 }
 
@@ -192,7 +178,6 @@ export interface ViewElements {
     ascanTip: HTMLElement;
     echogram: HTMLCanvasElement;
     echogramTip: HTMLElement;
-    map: HTMLCanvasElement;
 }
 
 export class SonarView {
@@ -201,13 +186,9 @@ export class SonarView {
     private readonly el: ViewElements;
     private latest: PingView | null = null;
     private columns: Column[] = [];
-    /** By direction bin. */
-    private sectors = new Map<number, MapSector>();
     private ascan: Surface;
     private echogram: Surface;
-    private map: Surface;
     private image = document.createElement('canvas');
-    private mapImage = document.createElement('canvas');
     private ascanHover: Hover | null = null;
     private echogramHover: Hover | null = null;
     private dirty = true;
@@ -218,16 +199,12 @@ export class SonarView {
         this.el = el;
         this.ascan = new Surface(el.ascan);
         this.echogram = new Surface(el.echogram);
-        this.map = new Surface(el.map);
         this.image.width = HISTORY;
         this.image.height = ROWS;
-        this.mapImage.width = MAP_PIXELS;
-        this.mapImage.height = MAP_PIXELS;
 
         const observer = new ResizeObserver(() => this.invalidate());
         observer.observe(el.ascan);
         observer.observe(el.echogram);
-        observer.observe(el.map);
         window
             .matchMedia('(prefers-color-scheme: dark)')
             .addEventListener('change', () => {
@@ -263,28 +240,15 @@ export class SonarView {
         this.options = options;
         this.latest = null;
         this.columns = [];
-        this.sectors.clear();
         this.textDirty = true;
-        this.invalidate();
-    }
-
-    clearMap(): void {
-        this.sectors.clear();
         this.invalidate();
     }
 
     update(ping: PingView): void {
         this.latest = ping;
-        const column = this.makeColumn(ping);
-        this.columns.push(column);
+        this.columns.push(this.makeColumn(ping));
         if (this.columns.length > HISTORY) {
             this.columns.shift();
-        }
-        if (ping.valid && ping.heading !== null) {
-            this.sectors.set(mapBin(ping.heading), {
-                rows: column.rows,
-                estimate: column.estimate,
-            });
         }
         this.textDirty = true;
         this.invalidate();
@@ -428,7 +392,6 @@ export class SonarView {
     private draw(): void {
         this.drawAscan();
         this.drawEchogram();
-        this.drawMap();
     }
 
     private drawAxes(
@@ -762,120 +725,6 @@ export class SonarView {
         this.showTip(tip, this.echogram, hover.x, hover.y, parts.join(' · '));
     }
 
-    /**
-     * Top view with the phone in the centre and its current direction
-     * pointing up: the echogram column of the last ping heard in each
-     * direction, and the distance measured there.
-     */
-    private drawMap(): void {
-        const s = this.map;
-        if (s.canvas.clientWidth === 0) {
-            return; // hidden: no orientation sensor
-        }
-        const t = this.theme;
-        s.begin(t);
-        const { ctx } = s;
-        const { maxRange } = this.options;
-        const cx = s.width / 2;
-        const cy = s.height / 2;
-        const radius = Math.max(1, Math.min(cx, cy) - 16);
-        const heading = this.latest?.heading ?? 0;
-        /** Canvas position of a point in compass direction `deg` at distance d. */
-        const pos = (deg: number, d: number): [number, number] => {
-            const a = ((deg - heading - 90) * Math.PI) / 180;
-            const r = (Math.min(d, maxRange) / maxRange) * radius;
-            return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
-        };
-
-        // Intensity image: for each pixel, the sector and distance row it
-        // falls into.
-        const img = new ImageData(MAP_PIXELS, MAP_PIXELS);
-        const half = MAP_PIXELS / 2;
-        for (let py = 0; py < MAP_PIXELS; py++) {
-            for (let px = 0; px < MAP_PIXELS; px++) {
-                const dx = px + 0.5 - half;
-                const dy = py + 0.5 - half;
-                const r = Math.floor((Math.hypot(dx, dy) / half) * ROWS);
-                if (r >= ROWS) {
-                    continue;
-                }
-                const deg = (Math.atan2(dx, -dy) * 180) / Math.PI + heading;
-                const db = this.sectors.get(mapBin(deg))?.rows[r];
-                if (db === undefined || Number.isNaN(db)) {
-                    continue;
-                }
-                const level = Math.round(
-                    Math.max(0, Math.min(1, 1 - db / DB_FLOOR)) * 255
-                );
-                const o = (py * MAP_PIXELS + px) * 4;
-                img.data[o] = t.lut[level * 3];
-                img.data[o + 1] = t.lut[level * 3 + 1];
-                img.data[o + 2] = t.lut[level * 3 + 2];
-                img.data[o + 3] = 255;
-            }
-        }
-        this.mapImage.getContext('2d')?.putImageData(img, 0, 0);
-        ctx.imageSmoothingEnabled = false;
-        ctx.drawImage(
-            this.mapImage,
-            cx - radius,
-            cy - radius,
-            2 * radius,
-            2 * radius
-        );
-
-        ctx.lineWidth = 1;
-        ctx.strokeStyle = t.axis;
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'bottom';
-        for (const d of niceTicks(0, maxRange, 4)) {
-            if (d === 0) {
-                continue;
-            }
-            const r = (d / maxRange) * radius;
-            ctx.beginPath();
-            ctx.arc(cx, cy, r, 0, 2 * Math.PI);
-            ctx.stroke();
-            // Legible over the image as well as next to it.
-            ctx.lineWidth = 3;
-            ctx.strokeStyle = t.surface;
-            ctx.strokeText(`${d} m`, cx + 4, cy - r - 2);
-            ctx.lineWidth = 1;
-            ctx.strokeStyle = t.axis;
-            ctx.fillStyle = t.textSecondary;
-            ctx.fillText(`${d} m`, cx + 4, cy - r - 2);
-        }
-
-        // The direction the phone points in.
-        ctx.beginPath();
-        ctx.moveTo(cx, cy);
-        ctx.lineTo(cx, cy - radius);
-        ctx.stroke();
-
-        for (const [bin, sector] of this.sectors) {
-            if (sector.estimate === null) {
-                continue;
-            }
-            const [x, y] = pos(bin * MAP_BIN, sector.estimate);
-            ctx.beginPath();
-            ctx.arc(x, y, 4, 0, 2 * Math.PI);
-            ctx.fillStyle = t.surface;
-            ctx.fill();
-            ctx.beginPath();
-            ctx.arc(x, y, 2.5, 0, 2 * Math.PI);
-            ctx.fillStyle = t.series2;
-            ctx.fill();
-        }
-
-        // The current measurement, larger.
-        const est = this.latest?.estimate;
-        if (est && this.latest?.heading !== null) {
-            const [x, y] = pos(heading, est.distance);
-            this.dot(ctx, x, y, t.series2);
-        }
-        this.dot(ctx, cx, cy, t.textSecondary);
-    }
-
     /** A ≥8px marker with a 2px surface ring. */
     private dot(
         ctx: CanvasRenderingContext2D,
@@ -909,12 +758,6 @@ export class SonarView {
         tip.style.left = `${Math.max(0, left)}px`;
         tip.style.top = `${top}px`;
     }
-}
-
-/** Direction bin of the map for a heading in degrees (any range). */
-function mapBin(degrees: number): number {
-    const bins = 360 / MAP_BIN;
-    return ((Math.round(degrees / MAP_BIN) % bins) + bins) % bins;
 }
 
 function cm(metres: number): string {

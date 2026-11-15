@@ -29,7 +29,7 @@ Run tools through the pnpm scripts, not directly:
 - `src/motion.ts` — `MotionTracker`: which echo candidates move between pings.
 - `src/tracker.ts` — `DistanceTracker`: per-ping distances → steady reading,
   with two separate uncertainties (position; being the right echo at all).
-- `src/viz.ts` — all rendering (readout, A-scan, echogram, map), Canvas 2D.
+- `src/viz.ts` — all rendering (readout, A-scan, echogram), Canvas 2D.
 - `src/main.ts` — UI wiring and settings. `src/config.ts` — parameters.
 - `src/test/replay.test.ts` — the labelled recordings replayed through
   analyser + tracker; `src/test/fixtures.ts` has the replay helper.
@@ -90,8 +90,7 @@ Headless Chromium accepts a WAV as microphone:
 `--use-fake-ui-for-media-stream --use-fake-device-for-media-stream
 --use-file-for-fake-audio-capture=<wav>`. Stitch a recording's pings into a
 WAV (they overlap into a continuous stream), set the app to the recording's
-ping rate, and drive the page over the DevTools protocol. Device orientation
-can be emulated with `DeviceOrientation.setDeviceOrientationOverride`.
+ping rate, and drive the page over the DevTools protocol.
 
 ## Conventions
 

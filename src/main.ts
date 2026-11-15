@@ -16,7 +16,6 @@ import {
 } from './config';
 import { speedOfSound } from './dsp';
 import type { FromWorker } from './messages';
-import { watchHeading } from './orientation';
 import { encodeRecording, Recorder } from './recording';
 import { DistanceTracker } from './tracker';
 import { SonarView, type ViewOptions } from './viz';
@@ -50,7 +49,6 @@ const settingInputs = [
 const chirpRange = el<HTMLElement>('chirp-range');
 const status = el<HTMLElement>('status');
 const errorBox = el<HTMLElement>('error');
-const mapPanel = el<HTMLElement>('map-panel');
 el('version').textContent =
     `Version ${import.meta.env.VITE_GIT_VERSION || 'dev'}`;
 
@@ -91,7 +89,6 @@ const view = new SonarView(viewOptions(config, 48000), {
     ascanTip: el('ascan-tip'),
     echogram: el('echogram'),
     echogramTip: el('echogram-tip'),
-    map: el('map'),
 });
 
 let session: AudioSession | null = null;
@@ -100,10 +97,6 @@ let pingCount = 0;
 // Kept after Stop, so a recording can still be saved.
 const recorder = new Recorder(0);
 let recordingInfo: { sampleRate: number; chirp: Float32Array } | null = null;
-
-/** Latest direction of the phone, if it has an orientation sensor. */
-let heading: number | null = null;
-let stopHeading: (() => void) | null = null;
 
 /** Remembered in this browser, as a convenience. */
 const SETTINGS_KEY = 'sonar.settings.v2';
@@ -223,7 +216,6 @@ function onWorkerMessage(msg: FromWorker) {
                 latencyMs:
                     msg.latency === null ? null : (msg.latency / fs) * 1000,
                 estimate,
-                heading,
             });
             break;
         }
@@ -238,9 +230,6 @@ function setRunning(running: boolean) {
 async function stop() {
     const s = session;
     session = null;
-    stopHeading?.();
-    stopHeading = null;
-    heading = null;
     if (s) {
         await closeAudio(s);
     }
@@ -257,11 +246,6 @@ async function start() {
         );
     }
     config = { ...DEFAULT_CONFIG, ...settings };
-    // Asked for first: on iOS only right after the tap.
-    stopHeading = await watchHeading((degrees) => {
-        heading = degrees;
-        mapPanel.hidden = false;
-    });
     session = await openAudio(onWorkerMessage);
     renderSettings();
     pingCount = 0;
@@ -295,8 +279,6 @@ button.addEventListener('click', async () => {
         button.disabled = false;
     }
 });
-
-el('clear-map').addEventListener('click', () => view.clearMap());
 
 saveButton.addEventListener('click', () => {
     if (!recordingInfo || recorder.size === 0) {

@@ -271,12 +271,6 @@ input:disabled {
     border-radius: 2px;
 }
 
-.legend .point {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-}
-
 .legend .blind {
     background: var(--text-muted);
     opacity: 0.25;
@@ -313,10 +307,6 @@ input:disabled {
 
 #echogram {
     height: 260px;
-}
-
-#map {
-    height: 320px;
 }
 
 .tooltip {
