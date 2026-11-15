@@ -153,6 +153,10 @@ input[type="number"] {
     font-variant-numeric: tabular-nums;
 }
 
+select:focus {
+    outline: auto;
+}
+
 select:disabled,
 input:disabled {
     opacity: 0.5;
