@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { chirpBand, DEFAULT_CONFIG, maxChirpFrequency } from '../config';
+import {
+    chirpBand,
+    DEFAULT_CONFIG,
+    maxChirpFrequency,
+    maxRange,
+} from '../config';
 
 describe('chirpBand', () => {
     it('multiplies both ends of the sweep and keeps the fade', () => {
@@ -26,5 +31,22 @@ describe('chirpBand', () => {
         });
         expect(band.f1).toBeLessThanOrEqual(maxChirpFrequency(96000));
         expect(band.f1).toBeGreaterThan(maxChirpFrequency(48000));
+    });
+});
+
+describe('maxRange', () => {
+    const at = (rate: number) =>
+        maxRange({ ...DEFAULT_CONFIG, interval: 1 / rate });
+
+    it('ends a chirp before the next ping arrives', () => {
+        // 20 pings/s: 39 ms left after the 10 ms chirp and the guard.
+        expect(at(20)).toBeCloseTo((343.42 * 0.039) / 2 + 0.06, 6);
+        expect(at(30)).toBeGreaterThan(3.5);
+        expect(at(30)).toBeLessThan(4);
+    });
+
+    it('is capped at slow ping rates', () => {
+        expect(at(10)).toBe(10);
+        expect(at(4)).toBe(10);
     });
 });

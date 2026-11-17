@@ -1,5 +1,7 @@
 // Sonar parameters.
 
+import { speedOfSound } from './dsp';
+
 export interface Band {
     label: string;
     /** Sweep start/end frequency in Hz. */
@@ -47,6 +49,32 @@ export function maxChirpFrequency(sampleRate: number): number {
     return 0.45 * sampleRate;
 }
 
+/**
+ * Farthest distance searched for echoes in any case (m). Against the noise
+ * in the recordings a wall would stay detectable to about 15 m, which only
+ * an outdoor wall with nothing nearer could use; indoors the room's own
+ * reverberation hides a wall from 2–3 m on.
+ */
+const MAX_RANGE_CAP = 10;
+
+/**
+ * Time (s) kept clear before the next ping's direct sound: its cluster
+ * starts about 1 ms before the centroid that is the time reference.
+ */
+const NEXT_PING_GUARD = 1e-3;
+
+/**
+ * Echoes farther than this (m) are not searched for. The analysis needs a
+ * whole chirp beyond the farthest echo, and that must end before the next
+ * ping's direct sound, which is a hundred times stronger than an echo.
+ */
+export function maxRange(config: SonarConfig): number {
+    const clear = config.interval - config.chirpDuration - NEXT_PING_GUARD;
+    const range =
+        (speedOfSound(config.temperature) * clear) / 2 + config.rangeOffset;
+    return Math.min(MAX_RANGE_CAP, range);
+}
+
 /** Ping rates offered in the UI, in pings per second. */
 export const PING_RATES = [4, 10, 20, 30];
 
@@ -83,8 +111,14 @@ export interface SonarConfig {
      * there the phone's own response is too strong and too variable.
      */
     blindRange: number;
-    /** Echoes farther than this (m) are not searched for. */
-    maxRange: number;
+    /**
+     * Beyond this (m), echoes are only reported when none is found nearer.
+     * Indoors the room's reverberation is as strong there as a wall would
+     * be, and changes whenever the phone moves, so it would pass for a
+     * clearer or a moving echo. Indoors something (the floor, the ceiling)
+     * is always nearer; this leaves the far range to open spaces.
+     */
+    reverbRange: number;
     /** Air temperature in °C, for the speed of sound. */
     temperature: number;
     /** Assumed uncertainty of the temperature, in °C. */
@@ -123,7 +157,7 @@ export const DEFAULT_CONFIG: SonarConfig = {
     amplitude: 0.8,
     rangeOffset: 0.06,
     blindRange: 0.08,
-    maxRange: 2,
+    reverbRange: 2,
     temperature: 20,
     temperatureSigma: 2,
     sensitivityDb: -32,

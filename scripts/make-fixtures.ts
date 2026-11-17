@@ -10,9 +10,13 @@
 
 import { readFileSync, writeFileSync } from 'node:fs';
 
-/** Samples kept before and after the recorded direct path (at 96 kHz). */
+/**
+ * Samples kept before and after the recorded direct path (at 96 kHz). After
+ * it: the 10 m searched at 4 pings/s, a chirp, and the analyser's tolerance
+ * for latency drift.
+ */
 const BEFORE = 300;
-const AFTER = 2300;
+const AFTER = 8000;
 
 /** Recording → fixture name, and how many pings to keep (default: all). */
 const SOURCES: [string, string, number?][] = [

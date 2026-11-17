@@ -11,6 +11,7 @@ import {
     DEFAULT_CONFIG,
     ECHO_CHOICES,
     type EchoChoice,
+    maxRange,
     PING_RATES,
     type SonarConfig,
 } from './config';
@@ -62,7 +63,7 @@ function viewOptions(config: SonarConfig, sampleRate: number): ViewOptions {
         metresPerSample: speedOfSound(config.temperature) / sampleRate / 2,
         rangeOffset: config.rangeOffset,
         minRange: config.blindRange + config.rangeOffset,
-        maxRange: config.maxRange,
+        maxRange: maxRange(config),
         interval: config.interval,
     };
 }

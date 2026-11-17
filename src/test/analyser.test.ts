@@ -85,9 +85,10 @@ describe('PingAnalyser', () => {
         expect(results[0].window.length).toBeGreaterThan(period);
         const tracking = results[1].window;
         expect(tracking.acquiring).toBe(false);
-        // The ping can be analysed well before the next one is due.
+        // Echoes are searched for until shortly before the next ping
+        // arrives, so the ping can be analysed about when that happens.
         const ready = tracking.start + tracking.length - period;
-        expect(ready).toBeLessThan(1000 + 0.035 * fs);
+        expect(ready).toBeLessThan(1000 + period + 0.01 * fs);
         expect(tracking.length).toBeLessThan(results[0].window.length / 1.5);
     });
 

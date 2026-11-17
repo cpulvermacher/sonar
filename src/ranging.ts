@@ -10,7 +10,7 @@
 // lag: whatever the phone is pointed at comes and goes, the phone's own
 // response is always there.
 
-import { chirpBand, type SonarConfig } from './config';
+import { chirpBand, maxRange, type SonarConfig } from './config';
 import { argmax, MatchedFilter, median, nextPow2, speedOfSound } from './dsp';
 import { type Motion, type MotionOptions, MotionTracker } from './motion';
 
@@ -31,6 +31,8 @@ export interface RangingParams {
     /** Lags (after the direct path) searched for echoes: [minLag, maxLag]. */
     minLag: number;
     maxLag: number;
+    /** Echoes beyond this lag only count if none is nearer, see chooseEcho. */
+    reverbLag: number;
     /** Narrower stretches above the threshold are ignored. */
     minWidth: number;
     /** Minimum power excess over the clutter floor. */
@@ -79,8 +81,9 @@ export function rangingParams(
         smooth: samples(0.1e-3),
         minLag: Math.ceil(config.blindRange / metresPerSample),
         maxLag: Math.ceil(
-            (config.maxRange - config.rangeOffset) / metresPerSample
+            (maxRange(config) - config.rangeOffset) / metresPerSample
         ),
+        reverbLag: (config.reverbRange - config.rangeOffset) / metresPerSample,
         minWidth: samples(0.06e-3),
         minExcess: fromDb(config.minExcessDb),
         sensitivity: fromDb(config.sensitivityDb),
@@ -431,11 +434,16 @@ function handicap(c: Candidate, other: Candidate, p: RangingParams): number {
  * some factor has odds of one in that factor of being the right one after
  * all. For this only, an echo further out counts as a worse guess by
  * FAR_PREFERENCE, where the choice itself always goes to the nearer one.
+ *
+ * Candidates beyond reverbLag take part only if there is none in front of
+ * it, neither as the choice nor as rivals: see SonarConfig.reverbRange.
  */
-export function chooseEcho(
-    candidates: Candidate[],
-    p: RangingParams
-): Echo | null {
+export function chooseEcho(all: Candidate[], p: RangingParams): Echo | null {
+    const near = all.filter((c) => c.lag <= p.reverbLag);
+    return chooseAmong(near.length > 0 ? near : all, p);
+}
+
+function chooseAmong(candidates: Candidate[], p: RangingParams): Echo | null {
     const n = candidates.length;
     const all = candidates.map((_, i) => i);
     let chosen = nearestClear(candidates, all, p);
@@ -649,10 +657,14 @@ export class Ranger {
             clutter
         );
         if (p.motionBonus > 0) {
+            // Only where motion can matter (see chooseEcho). Reverberation
+            // further out would otherwise make tracks that, followed at
+            // their speed, end up taking over the tracks of nearer echoes.
+            const near = candidates.filter((c) => c.lag <= p.reverbLag);
             const motion = this.motion.update(
-                candidates.map((c) => c.lag + result.lagOffset)
+                near.map((c) => c.lag + result.lagOffset)
             );
-            candidates.forEach((c, i) => {
+            near.forEach((c, i) => {
                 c.motion = motion[i];
             });
         }

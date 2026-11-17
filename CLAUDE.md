@@ -80,6 +80,12 @@ Run tools through the pnpm scripts, not directly:
 - All time constants are defined in seconds and converted to samples/pings
   (`rangingParams`), since sample rate (48/96 kHz) and ping rate vary. The
   recordings are 96 kHz at 4 pings/s; the app defaults to 20 pings/s.
+- The search range follows the ping rate (`maxRange`: the echo must be in
+  before the next ping, capped at 10 m). Indoors, from about 2 m on, the
+  room's reverberation is as strong as a wall's echo and changes whenever
+  the phone moves, so it passes for a clearer or a moving echo; beyond
+  `reverbRange` echoes count only when there is none nearer, and their
+  motion is not tracked. Ambient noise would allow about 15 m outdoors.
 - Known weak spots: echoes closer than about 25 cm (merge with the tail; a
   wall there from the first ping is only found after the phone moves),
   and below the blind range the reading flips to multiple bounces.

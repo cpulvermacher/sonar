@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_CONFIG } from '../config';
+import { DEFAULT_CONFIG, maxRange } from '../config';
 import { makeChirp } from '../dsp';
 import {
     type Candidate,
@@ -25,7 +25,7 @@ describe('rangingParams', () => {
         expect((params.minLag - 1) * mps).toBeLessThan(config.blindRange);
         // The offset is added afterwards, so it is not searched twice.
         expect(params.maxLag * mps + config.rangeOffset).toBeCloseTo(
-            config.maxRange,
+            maxRange(config),
             2
         );
     });
@@ -392,8 +392,10 @@ describe('echoThreshold', () => {
 
 describe('Ranger', () => {
     const chirp = makeChirp(fs, 2000, 12000, 0.005);
-    const n = 4000;
     const directAt = 1000;
+    // Covers the whole range searched: where the signal stopped, the hum
+    // would stop abruptly and look like an echo.
+    const n = directAt + params.maxLag + 2 * chirp.length;
 
     /** A ping with echoes given as [delay in samples, amplitude]. */
     function ping(echoes: [number, number][], seed = 1): Float32Array {
