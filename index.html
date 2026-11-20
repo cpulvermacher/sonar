@@ -3,43 +3,53 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta name="theme-color" content="#0d1611" media="(prefers-color-scheme: dark)" />
+        <meta name="theme-color" content="#f5f6f1" media="(prefers-color-scheme: light)" />
         <title>Sonar</title>
-      <script type="module" crossorigin src="./assets/index-De8cmKo-.js"></script>
-      <link rel="stylesheet" crossorigin href="./assets/index-B7PgEZQz.css">
+      <script type="module" crossorigin src="./assets/index-DJFRGSoa.js"></script>
+      <link rel="stylesheet" crossorigin href="./assets/index-ClhXNzw6.css">
     </head>
     <body>
+        <header class="panel-bar">
+            <div class="readout" aria-live="polite">
+                <div class="reading">
+                    <span id="distance">—</span>
+                    <span id="sigma"></span>
+                </div>
+                <div id="details"></div>
+            </div>
+            <button id="toggle" class="key" type="button" aria-pressed="false">Start</button>
+        </header>
+
         <main>
             <h1>Sonar</h1>
-            <div class="controls main">
-                <button id="toggle" type="button" aria-pressed="false">Start</button>
-                <div class="readout" aria-live="polite">
-                    <div class="hero">
-                        <span id="distance">—</span>
-                        <span id="sigma"></span>
-                    </div>
-                    <div id="details"></div>
+
+            <section class="settings" aria-label="Settings">
+                <div class="fields">
+                    <label class="field"><span>Chirp</span><select id="band"></select></label>
+                    <label class="field"><span>Frequency ×</span><input id="freq-scale" type="number" min="0.5" max="4" step="0.1" value="1" inputmode="decimal" /></label>
+                    <label class="field"><span>Pings per second</span><select id="rate"></select></label>
+                    <label class="field" title="Half the distance between the phone's speaker and its microphone; added to every measurement"><span>Offset (cm)</span><input id="offset" type="number" min="0" max="20" step="0.5" inputmode="decimal" /></label>
+                    <label class="field" title="Which echo is reported when there are several: always the nearest, or the nearest unless one behind it is much clearer or is the one that moves"><span>Echo</span><select id="prefer"></select></label>
                 </div>
-            </div>
-            <div class="controls settings">
-                <label>Chirp <select id="band"></select></label>
-                <label>Frequency × <input id="freq-scale" type="number" min="0.5" max="4" step="0.1" value="1" inputmode="decimal" /></label>
-                <label>Pings per second <select id="rate"></select></label>
-                <label title="Half the distance between the phone's speaker and its microphone; added to every measurement">Offset (cm) <input id="offset" type="number" min="0" max="20" step="0.5" inputmode="decimal" /></label>
-                <label title="Which echo is reported when there are several: always the nearest, or the nearest unless one behind it is much clearer or is the one that moves">Echo <select id="prefer"></select></label>
-                <span id="chirp-range"></span>
-                <button id="save" type="button" class="secondary small" disabled>Save recording</button>
-                <span id="status"></span>
-            </div>
+                <div class="settings-status">
+                    <span id="chirp-range"></span>
+                    <span id="status"></span>
+                    <button id="save" type="button" class="key quiet" disabled>Save recording</button>
+                </div>
+            </section>
             <p id="error" role="alert"></p>
 
-            <section class="panel chart">
-                <h2>Latest ping</h2>
-                <p class="subtitle">Matched-filter power in dB relative to the direct path, by distance. The threshold follows the phone's own response, which is learned while running.</p>
-                <div class="legend">
-                    <span><span class="key" style="background: var(--series-1)"></span>Echo power</span>
-                    <span><span class="key dashed"></span>Threshold</span>
-                    <span><span class="key band" style="background: var(--series-2)"></span>Estimate ± σ</span>
-                    <span><span class="key band blind"></span>Too close</span>
+            <section class="scope">
+                <div class="scope-head">
+                    <h2>Latest ping</h2>
+                    <p class="subtitle">Matched-filter power in dB relative to the direct path, by distance. The threshold follows the phone's own response, which is learned while running.</p>
+                    <ul class="legend">
+                        <li><span class="key-swatch trace"></span>Echo power</li>
+                        <li><span class="key-swatch dashed"></span>Threshold</li>
+                        <li><span class="key-swatch band estimate"></span>Estimate ± σ</li>
+                        <li><span class="key-swatch band blind"></span>Too close</li>
+                    </ul>
                 </div>
                 <div class="plot">
                     <canvas id="ascan"></canvas>
@@ -48,12 +58,14 @@
                 <p class="stats" id="ping-stats"></p>
             </section>
 
-            <section class="panel chart">
-                <h2>Echogram</h2>
-                <p class="subtitle">One column per ping, newest on the right</p>
-                <div class="legend">
-                    <span>−60 dB<span class="scale" id="scale"></span>0 dB</span>
-                    <span><span class="key" style="background: var(--series-2)"></span>Estimate</span>
+            <section class="scope">
+                <div class="scope-head">
+                    <h2>Echogram</h2>
+                    <p class="subtitle">One column per ping, newest on the right</p>
+                    <ul class="legend">
+                        <li>−60 dB<span class="ramp" id="scale"></span>0 dB</li>
+                        <li><span class="key-swatch estimate"></span>Estimate</li>
+                    </ul>
                 </div>
                 <div class="plot">
                     <canvas id="echogram"></canvas>
