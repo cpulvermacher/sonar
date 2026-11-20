@@ -37,9 +37,10 @@ const DB_FLOOR = -60;
 const HISTORY = 240;
 const ROWS = 200;
 const MARGIN = { left: 48, right: 12, top: 20, bottom: 28 };
-const FONT = '12px system-ui, -apple-system, "Segoe UI", sans-serif';
 
 interface Theme {
+    /** Canvas font for tick labels, from --font-mono. */
+    font: string;
     surface: string;
     textSecondary: string;
     textMuted: string;
@@ -63,13 +64,29 @@ interface Hover {
     y: number;
 }
 
-function hexToRgb(hex: string): [number, number, number] {
-    const n = Number.parseInt(hex.replace('#', ''), 16);
-    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+/**
+ * RGB of any CSS colour (the tokens are OKLCH), by letting a canvas paint
+ * one pixel of it: the browser does the colour conversion.
+ */
+function cssToRgb(
+    ctx: CanvasRenderingContext2D,
+    color: string
+): [number, number, number] {
+    ctx.clearRect(0, 0, 1, 1);
+    ctx.fillStyle = color;
+    ctx.fillRect(0, 0, 1, 1);
+    const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+    return [r, g, b];
 }
 
 function makeLut(stops: string[]): Uint8ClampedArray {
-    const rgb = stops.map(hexToRgb);
+    const probe = document.createElement('canvas');
+    probe.width = probe.height = 1;
+    const ctx = probe.getContext('2d', { willReadFrequently: true });
+    if (!ctx) {
+        throw new Error('Canvas 2D not supported');
+    }
+    const rgb = stops.map((s) => cssToRgb(ctx, s));
     const lut = new Uint8ClampedArray(256 * 3);
     for (let i = 0; i < 256; i++) {
         const t = (i / 255) * (rgb.length - 1);
@@ -86,16 +103,18 @@ function readTheme(): Theme {
     const style = getComputedStyle(document.documentElement);
     const v = (name: string) => style.getPropertyValue(name).trim();
     return {
-        surface: v('--surface'),
-        textSecondary: v('--text-secondary'),
-        textMuted: v('--text-muted'),
-        grid: v('--grid'),
-        axis: v('--axis'),
-        series1: v('--series-1'),
-        series2: v('--series-2'),
+        font: `12px ${v('--font-mono')}`,
+        surface: v('--color-paper-2'),
+        textSecondary: v('--color-ink-2'),
+        textMuted: v('--color-ink-3'),
+        grid: v('--color-grid'),
+        axis: v('--color-axis'),
+        series1: v('--color-series-1'),
+        series2: v('--color-series-2'),
+        // Split between the stops, not inside oklch(…).
         lut: makeLut(
-            v('--ramp')
-                .split(',')
+            v('--color-ramp')
+                .split(/,(?![^(]*\))/)
                 .map((s) => s.trim())
         ),
     };
@@ -156,7 +175,7 @@ class Surface {
         this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         this.ctx.fillStyle = theme.surface;
         this.ctx.fillRect(0, 0, this.width, this.height);
-        this.ctx.font = FONT;
+        this.ctx.font = theme.font;
     }
 
     get plot() {
@@ -211,6 +230,9 @@ export class SonarView {
                 this.theme = readTheme();
                 this.invalidate();
             });
+        // Tick labels drawn before the web font arrived use the fallback;
+        // redraw once it is there.
+        document.fonts?.ready.then(() => this.invalidate());
 
         this.trackHover(el.ascan, (h) => {
             this.ascanHover = h;

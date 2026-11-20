@@ -1,0 +1,118 @@
+/* Hallmark · tokens · genre: atmospheric · theme: Terminal (instrument variant)
+ * Dark is the instrument; light is the same instrument printed on chart paper.
+ * The canvas code reads the colour tokens at runtime (readTheme in viz.ts),
+ * so every colour the plots use lives here too.
+ */
+
+:root {
+    color-scheme: dark;
+
+    /* Dark green-black panel, phosphor trace. */
+    --color-paper: oklch(16% 0.012 160);
+    --color-paper-2: oklch(19.5% 0.014 160);
+    --color-ink: oklch(93% 0.02 150);
+    --color-ink-2: oklch(77% 0.025 155);
+    --color-ink-3: oklch(63% 0.02 155);
+    --color-rule: oklch(30% 0.02 158);
+    --color-grid: oklch(26% 0.018 158);
+    --color-axis: oklch(40% 0.025 158);
+    --color-accent: oklch(85% 0.19 150);
+    --color-accent-2: oklch(91% 0.15 150);
+    --color-on-accent: oklch(16% 0.012 160);
+    --color-lamp-off: oklch(34% 0.02 158);
+    --color-error: oklch(72% 0.17 25);
+    --color-focus: oklch(85% 0.19 150);
+    --color-shadow: oklch(0% 0 0 / 0.5);
+    /* Chart roles: the trace, and the marker laid over it. */
+    --color-series-1: oklch(85% 0.19 150);
+    --color-series-2: oklch(80% 0.15 70);
+    /* Echogram intensity, "nothing" receding into the panel. */
+    --color-ramp:
+        oklch(20% 0.03 160), oklch(30% 0.07 158), oklch(42% 0.11 155),
+        oklch(55% 0.15 152), oklch(68% 0.18 150), oklch(81% 0.19 148),
+        oklch(94% 0.1 140);
+
+    --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    --font-body:
+        "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+    /* 4 pt scale. */
+    --space-3xs: 0.125rem;
+    --space-2xs: 0.25rem;
+    --space-xs: 0.5rem;
+    --space-sm: 0.75rem;
+    --space-md: 1rem;
+    --space-lg: 1.5rem;
+    --space-xl: 2rem;
+    --space-2xl: 3rem;
+
+    /* Major third from 15 px body. */
+    --text-2xs: 0.6875rem;
+    --text-xs: 0.75rem;
+    --text-sm: 0.8125rem;
+    --text-md: 0.9375rem;
+    --text-lg: 1.125rem;
+    --text-readout: clamp(2.25rem, 6vw + 1rem, 3.5rem);
+
+    --rule-hair: 1px;
+    --radius-key: 3px;
+    --radius-field: 2px;
+
+    --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+    --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+    --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+    --dur-short: 120ms;
+}
+
+/* Chart paper: ink-green trace on off-white. */
+@media (prefers-color-scheme: light) {
+    :root:where(:not([data-theme="dark"])) {
+        color-scheme: light;
+        --color-paper: oklch(97% 0.008 110);
+        --color-paper-2: oklch(99% 0.004 110);
+        --color-ink: oklch(22% 0.02 160);
+        --color-ink-2: oklch(40% 0.02 160);
+        --color-ink-3: oklch(50% 0.02 160);
+        --color-rule: oklch(86% 0.012 150);
+        --color-grid: oklch(91% 0.012 150);
+        --color-axis: oklch(76% 0.015 150);
+        --color-accent: oklch(48% 0.13 155);
+        --color-accent-2: oklch(42% 0.12 155);
+        --color-on-accent: oklch(99% 0.004 110);
+        --color-lamp-off: oklch(80% 0.012 150);
+        --color-error: oklch(52% 0.18 25);
+        --color-focus: oklch(48% 0.13 155);
+        --color-shadow: oklch(20% 0.02 160 / 0.14);
+        --color-series-1: oklch(50% 0.13 155);
+        --color-series-2: oklch(62% 0.16 50);
+        --color-ramp:
+            oklch(97% 0.02 140), oklch(88% 0.06 145), oklch(76% 0.1 150),
+            oklch(63% 0.12 153), oklch(50% 0.11 156), oklch(37% 0.08 160),
+            oklch(24% 0.05 165);
+    }
+}
+
+:root[data-theme="light"] {
+    color-scheme: light;
+    --color-paper: oklch(97% 0.008 110);
+    --color-paper-2: oklch(99% 0.004 110);
+    --color-ink: oklch(22% 0.02 160);
+    --color-ink-2: oklch(40% 0.02 160);
+    --color-ink-3: oklch(50% 0.02 160);
+    --color-rule: oklch(86% 0.012 150);
+    --color-grid: oklch(91% 0.012 150);
+    --color-axis: oklch(76% 0.015 150);
+    --color-accent: oklch(48% 0.13 155);
+    --color-accent-2: oklch(42% 0.12 155);
+    --color-on-accent: oklch(99% 0.004 110);
+    --color-lamp-off: oklch(80% 0.012 150);
+    --color-error: oklch(52% 0.18 25);
+    --color-focus: oklch(48% 0.13 155);
+    --color-shadow: oklch(20% 0.02 160 / 0.14);
+    --color-series-1: oklch(50% 0.13 155);
+    --color-series-2: oklch(62% 0.16 50);
+    --color-ramp:
+        oklch(97% 0.02 140), oklch(88% 0.06 145), oklch(76% 0.1 150),
+        oklch(63% 0.12 153), oklch(50% 0.11 156), oklch(37% 0.08 160),
+        oklch(24% 0.05 165);
+}

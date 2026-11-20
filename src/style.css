@@ -1,302 +1,404 @@
-:root {
-    color-scheme: light;
-    --page: #f9f9f7;
-    --surface: #fcfcfb;
-    --text-primary: #0b0b0b;
-    --text-secondary: #52514e;
-    --text-muted: #898781;
-    --grid: #e1e0d9;
-    --axis: #c3c2b7;
-    --border: rgba(11, 11, 11, 0.1);
-    --accent: #2a78d6;
-    --on-accent: #ffffff;
-    --error: #d03b3b;
-    /* Chart roles. */
-    --series-1: #2a78d6;
-    --series-2: #eb6834;
-    /* Sequential ramp for intensity, from "nothing" to "strong". */
-    --ramp: #cde2fb, #9ec5f4, #6da7ec, #3987e5, #256abf, #184f95, #0d366b;
-}
+/* Hallmark · genre: atmospheric · macrostructure: Workbench · theme: Terminal (instrument variant) · tone: technical · anchor hue: 150 phosphor · enrichment: none · nav: N9 edge-aligned · footer: Ft2 inline */
+/* Hallmark · pre-emit critique: P4 H5 E4 S5 R5 V4 */
 
-@media (prefers-color-scheme: dark) {
-    :root:where(:not([data-theme="light"])) {
-        color-scheme: dark;
-        --page: #0d0d0d;
-        --surface: #1a1a19;
-        --text-primary: #f0efec;
-        --text-secondary: #c3c2b7;
-        --text-muted: #898781;
-        --grid: #2c2c2a;
-        --axis: #383835;
-        --border: rgba(255, 255, 255, 0.1);
-        --accent: #3987e5;
-        --on-accent: #0b0b0b;
-        --error: #e66767;
-        --series-1: #3987e5;
-        --series-2: #d95926;
-        /* On dark, "nothing" recedes into the dark surface. */
-        --ramp: #0d366b, #184f95, #256abf, #3987e5, #6da7ec, #9ec5f4, #cde2fb;
-    }
-}
+@import "@fontsource/ibm-plex-mono/latin-400.css";
+@import "@fontsource/ibm-plex-mono/latin-600.css";
+@import "@fontsource/ibm-plex-sans/latin-400.css";
+@import "./tokens.css";
 
-:root[data-theme="dark"] {
-    color-scheme: dark;
-    --page: #0d0d0d;
-    --surface: #1a1a19;
-    --text-primary: #f0efec;
-    --text-secondary: #c3c2b7;
-    --text-muted: #898781;
-    --grid: #2c2c2a;
-    --axis: #383835;
-    --border: rgba(255, 255, 255, 0.1);
-    --accent: #3987e5;
-    --on-accent: #0b0b0b;
-    --error: #e66767;
-    --series-1: #3987e5;
-    --series-2: #d95926;
-    --ramp: #0d366b, #184f95, #256abf, #3987e5, #6da7ec, #9ec5f4, #cde2fb;
+html,
+body {
+    overflow-x: clip;
 }
 
 body {
     margin: 0;
-    padding: 16px;
-    background: var(--page);
-    color: var(--text-primary);
-    font:
-        15px / 1.5 system-ui,
-        -apple-system,
-        "Segoe UI",
-        sans-serif;
+    background: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-body);
+    font-size: var(--text-md);
+    line-height: 1.5;
+    -webkit-text-size-adjust: 100%;
 }
 
 main {
-    max-width: 960px;
+    max-width: 60rem;
     margin: 0 auto;
+    padding: var(--space-md);
+}
+
+/* Numbers everywhere are instrument numbers: mono, tabular. */
+#distance,
+#sigma,
+#details,
+#chirp-range,
+#status,
+.stats,
+.tooltip,
+footer,
+input[type="number"] {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+}
+
+h1,
+h2 {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-style: normal;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin: 0;
 }
 
 h1 {
-    font-size: 20px;
-    margin: 0 0 12px;
+    font-size: var(--text-xs);
+    color: var(--color-ink-3);
+    margin-bottom: var(--space-sm);
 }
 
-button {
-    font: inherit;
-    font-weight: 600;
-    padding: 0.5em 1.5em;
-    border: 0;
-    border-radius: 6px;
-    background: var(--accent);
-    color: var(--on-accent);
-    cursor: pointer;
+h2 {
+    font-size: var(--text-sm);
+    color: var(--color-ink);
 }
 
-button.secondary {
-    background: transparent;
-    color: var(--accent);
-    box-shadow: inset 0 0 0 1px var(--border);
-}
+/* --- Front panel ---------------------------------------------------------
+ * The reading and the power key stay on screen while the plots scroll.
+ * The key sits on the right, under the thumb. */
 
-button:disabled {
-    opacity: 0.5;
-    cursor: default;
-}
-
-.controls {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    flex-wrap: wrap;
-}
-
-/* Start/Stop stays in reach while the page scrolls. */
-.controls.main {
+.panel-bar {
     position: sticky;
     top: 0;
     z-index: 10;
-    margin: 0 -16px;
-    padding: 8px 16px;
-    background: var(--page);
-    flex-wrap: nowrap;
-    border-bottom: 1px solid var(--border);
-}
-
-.controls.settings {
-    margin-top: 12px;
-}
-
-button.small {
-    font-size: 13px;
-    padding: 0.25em 0.75em;
-}
-
-.controls label {
-    display: inline-flex;
+    display: flex;
     align-items: center;
-    gap: 8px;
-    color: var(--text-secondary);
-    font-size: 14px;
+    gap: var(--space-md);
+    padding: var(--space-sm)
+        max(var(--space-md), calc((100% - 60rem) / 2 + var(--space-md)));
+    background: var(--color-paper);
+    border-bottom: var(--rule-hair) solid var(--color-rule);
 }
-
-select,
-input[type="number"] {
-    font: inherit;
-    color: var(--text-primary);
-    background: var(--surface);
-    border: 0;
-    border-radius: 6px;
-    box-shadow: inset 0 0 0 1px var(--border);
-    padding: 0.35em 0.5em;
-}
-
-input[type="number"] {
-    width: 5em;
-    font-variant-numeric: tabular-nums;
-}
-
-select:focus {
-    outline: auto;
-}
-
-select:disabled,
-input:disabled {
-    opacity: 0.5;
-}
-
-#chirp-range,
-#status {
-    color: var(--text-muted);
-    font-size: 13px;
-    font-variant-numeric: tabular-nums;
-}
-
-#error {
-    color: var(--error);
-}
-
-#error:empty {
-    display: none;
-}
-
-.panel {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 16px;
-    margin: 16px 0;
-}
-
-/* Readout, in the sticky bar next to Start/Stop. */
 
 .readout {
     flex: 1;
     min-width: 0;
 }
 
-.hero {
+.reading {
     display: flex;
     align-items: baseline;
-    gap: 8px;
     flex-wrap: wrap;
+    column-gap: var(--space-sm);
 }
 
 #distance {
-    font-size: 32px;
+    font-size: var(--text-readout);
     font-weight: 600;
-    line-height: 1.1;
-    font-variant-numeric: tabular-nums;
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    color: var(--color-accent);
+    overflow-wrap: anywhere;
+    min-width: 0;
 }
 
 #sigma {
-    font-size: 16px;
-    color: var(--text-secondary);
-    font-variant-numeric: tabular-nums;
+    font-size: var(--text-md);
+    color: var(--color-ink-2);
+    white-space: nowrap;
 }
 
 .pm-stack {
     display: inline-flex;
     flex-direction: column;
     vertical-align: middle;
-    font-size: 11px;
+    font-size: var(--text-2xs);
     line-height: 1.1;
 }
 
 #details {
-    color: var(--text-secondary);
-    font-size: 12px;
-    font-variant-numeric: tabular-nums;
+    color: var(--color-ink-2);
+    font-size: var(--text-xs);
+    min-height: 1.5em;
 }
 
-/* Charts */
+/* --- Keys ----------------------------------------------------------------
+ * Square-shouldered hardware keys, not pills. The power key carries a lamp
+ * that is lit while pinging; aria-pressed is the state, so the lamp cannot
+ * disagree with what screen readers hear. */
 
-.chart h2 {
-    font-size: 15px;
+.key {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    flex: none;
+    font-family: var(--font-mono);
+    font-size: var(--text-md);
     font-weight: 600;
-    margin: 0;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    padding: var(--space-sm) var(--space-md);
+    min-height: 2.75rem;
+    border: var(--rule-hair) solid var(--color-accent);
+    border-radius: var(--radius-key);
+    background: var(--color-accent);
+    color: var(--color-on-accent);
+    cursor: pointer;
+    transition:
+        background-color var(--dur-short) var(--ease-out),
+        border-color var(--dur-short) var(--ease-out);
 }
 
-.chart .subtitle {
-    color: var(--text-secondary);
-    font-size: 13px;
-    margin: 0 0 8px;
+#toggle::before {
+    content: "";
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background: var(--color-on-accent);
+    opacity: 0.35;
 }
 
-.chart .stats {
-    color: var(--text-secondary);
-    font-size: 12px;
-    font-variant-numeric: tabular-nums;
-    margin: 8px 0 0;
+#toggle[aria-pressed="true"] {
+    background: transparent;
+    color: var(--color-accent);
 }
 
-.chart .stats:empty {
+#toggle[aria-pressed="true"]::before {
+    background: var(--color-accent);
+    opacity: 1;
+    box-shadow:
+        0 0 0 0.1875rem var(--color-paper),
+        0 0 0 0.25rem var(--color-accent);
+}
+
+.key:hover:not(:disabled) {
+    background: var(--color-accent-2);
+    border-color: var(--color-accent-2);
+}
+
+#toggle[aria-pressed="true"]:hover:not(:disabled) {
+    background: var(--color-paper-2);
+}
+
+.key:active:not(:disabled) {
+    transform: translateY(1px);
+}
+
+/* Disabled also covers "working": the key is disabled while audio opens. */
+.key:disabled {
+    cursor: default;
+    opacity: 0.45;
+}
+
+.key.quiet {
+    font-size: var(--text-xs);
+    min-height: 2rem;
+    padding: var(--space-2xs) var(--space-sm);
+    background: transparent;
+    color: var(--color-accent);
+    border-color: var(--color-rule);
+}
+
+.key.quiet:hover:not(:disabled) {
+    background: var(--color-paper-2);
+    border-color: var(--color-accent);
+}
+
+.key.quiet:disabled {
+    color: var(--color-ink-3);
+}
+
+:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+}
+
+/* --- Settings -------------------------------------------------------------
+ * A row of labelled fields, label above value, like the parameter strip on
+ * a bench instrument. */
+
+.settings {
+    border: var(--rule-hair) solid var(--color-rule);
+    border-radius: var(--radius-field);
+}
+
+.fields {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 9.5rem), 1fr));
+}
+
+.field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+    min-width: 0;
+    padding: var(--space-sm);
+    border-right: var(--rule-hair) solid var(--color-rule);
+    border-bottom: var(--rule-hair) solid var(--color-rule);
+    margin: 0 calc(-1 * var(--rule-hair)) calc(-1 * var(--rule-hair)) 0;
+}
+
+.field > span {
+    font-family: var(--font-mono);
+    font-size: var(--text-2xs);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-ink-3);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+select,
+input[type="number"] {
+    font: inherit;
+    font-size: var(--text-md);
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    color: var(--color-ink);
+    background: var(--color-paper-2);
+    border: var(--rule-hair) solid var(--color-rule);
+    border-radius: var(--radius-field);
+    padding: var(--space-xs);
+    transition: border-color var(--dur-short) var(--ease-out);
+}
+
+select:hover:not(:disabled),
+input[type="number"]:hover:not(:disabled) {
+    border-color: var(--color-axis);
+}
+
+select:focus-visible,
+input[type="number"]:focus-visible {
+    outline-offset: 0;
+    border-color: var(--color-focus);
+}
+
+input[type="number"]:invalid {
+    border-color: var(--color-error);
+}
+
+select:disabled,
+input:disabled {
+    color: var(--color-ink-3);
+    cursor: default;
+}
+
+.settings-status {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-xs) var(--space-md);
+    padding: var(--space-sm);
+    font-size: var(--text-xs);
+    color: var(--color-ink-3);
+}
+
+.settings-status .key {
+    margin-left: auto;
+}
+
+#status:empty {
     display: none;
+}
+
+#error {
+    margin: var(--space-sm) 0 0;
+    padding: var(--space-xs) var(--space-sm);
+    border-left: 2px solid var(--color-error);
+    color: var(--color-error);
+}
+
+#error:empty {
+    display: none;
+}
+
+/* --- Scopes ---------------------------------------------------------------
+ * Each plot is a screen: heading and key above, the trace in a hairline
+ * frame, readings below. No card, the frame is the divider. */
+
+.scope {
+    margin-top: var(--space-2xl);
+}
+
+.scope-head {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+    margin-bottom: var(--space-sm);
+}
+
+.subtitle {
+    color: var(--color-ink-2);
+    font-size: var(--text-sm);
+    max-width: 65ch;
+    margin: 0;
 }
 
 .legend {
     display: flex;
-    gap: 16px;
     flex-wrap: wrap;
     align-items: center;
-    font-size: 13px;
-    color: var(--text-secondary);
-    margin-bottom: 8px;
+    gap: var(--space-2xs) var(--space-md);
+    list-style: none;
+    margin: var(--space-xs) 0 0;
+    padding: 0;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--color-ink-2);
 }
 
-.legend .key {
+.legend li {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    white-space: nowrap;
+}
+
+.key-swatch {
     display: inline-block;
-    width: 16px;
+    width: 1rem;
     height: 2px;
-    border-radius: 1px;
-    vertical-align: middle;
-    margin-right: 6px;
 }
 
-.legend .band {
-    height: 10px;
-    border-radius: 2px;
+.key-swatch.trace {
+    background: var(--color-series-1);
 }
 
-.legend .blind {
-    background: var(--text-muted);
+.key-swatch.estimate {
+    background: var(--color-series-2);
+}
+
+.key-swatch.band {
+    height: 0.625rem;
+}
+
+.key-swatch.band.estimate {
+    opacity: 0.45;
+}
+
+.key-swatch.blind {
+    background: var(--color-ink-3);
     opacity: 0.25;
 }
 
-.legend .dashed {
+.key-swatch.dashed {
     height: 0;
-    border-top: 1px dashed var(--text-muted);
+    border-top: 1px dashed var(--color-ink-3);
 }
 
-.legend .scale {
+.ramp {
     display: inline-block;
-    width: 96px;
-    height: 10px;
-    border-radius: 2px;
-    vertical-align: middle;
-    margin: 0 6px;
-    background: linear-gradient(to right, var(--ramp));
+    width: 6rem;
+    height: 0.625rem;
+    background: linear-gradient(to right, var(--color-ramp));
+    outline: var(--rule-hair) solid var(--color-rule);
 }
 
 .plot {
     position: relative;
+    border: var(--rule-hair) solid var(--color-rule);
 }
 
 .plot canvas {
@@ -306,33 +408,71 @@ input:disabled {
 }
 
 #ascan {
-    height: 220px;
+    height: 13.75rem;
 }
 
 #echogram {
-    height: 260px;
+    height: 16.25rem;
+}
+
+.stats {
+    color: var(--color-ink-2);
+    font-size: var(--text-xs);
+    margin: var(--space-xs) 0 0;
+}
+
+.stats:empty {
+    display: none;
 }
 
 .tooltip {
     position: absolute;
     pointer-events: none;
-    background: var(--surface);
-    color: var(--text-primary);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 4px 8px;
-    font-size: 12px;
+    background: var(--color-paper);
+    color: var(--color-ink);
+    border: var(--rule-hair) solid var(--color-axis);
+    border-radius: var(--radius-field);
+    padding: var(--space-2xs) var(--space-xs);
+    font-size: var(--text-xs);
     white-space: nowrap;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
-    font-variant-numeric: tabular-nums;
+    box-shadow: 0 2px 8px var(--color-shadow);
 }
 
 footer {
-    color: var(--text-muted);
-    font-size: 12px;
-    font-variant-numeric: tabular-nums;
+    margin-top: var(--space-2xl);
+    padding-top: var(--space-sm);
+    border-top: var(--rule-hair) solid var(--color-rule);
+    color: var(--color-ink-3);
+    font-size: var(--text-xs);
 }
 
 footer a {
     color: inherit;
+    text-underline-offset: 0.2em;
+}
+
+footer a:hover {
+    color: var(--color-accent);
+}
+
+@media (max-width: 30rem) {
+    #sigma {
+        font-size: var(--text-sm);
+    }
+
+    .key {
+        padding: var(--space-xs) var(--space-sm);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .key,
+    select,
+    input[type="number"] {
+        transition: none;
+    }
+
+    .key:active:not(:disabled) {
+        transform: none;
+    }
 }
